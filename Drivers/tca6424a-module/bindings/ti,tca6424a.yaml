@@ -1,0 +1,5 @@
+description: TI TCA6424A low-voltage 24-bit I2C-bus/SMBus I/O expander
+
+include: ["i2c-device.yaml"]
+
+compatible: "ti,tca6424a"

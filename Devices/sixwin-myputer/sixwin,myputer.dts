@@ -1,0 +1,63 @@
+/dts-v1/;
+
+#include <tactility/bindings/root.h>
+#include <tactility/bindings/esp32_ble.h>
+#include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_i2c_master.h>
+#include <tactility/bindings/esp32_uart.h>
+#include <tactility/bindings/esp32_wifi.h>
+#include <bindings/tca6424a.h>
+#include <bindings/pca9570.h>
+
+/ {
+	compatible = "root";
+	model = "MyPuter";
+
+	wifi0 {
+		compatible = "espressif,esp32-wifi";
+		status = "disabled";
+	};
+
+	ble0 {
+		compatible = "espressif,esp32-ble";
+	};
+
+	gpio0 {
+		compatible = "espressif,esp32-gpio";
+		gpio-count = <55>;
+	};
+
+	i2c_internal: i2c0 {
+		compatible = "espressif,esp32-i2c-master";
+		port = <I2C_NUM_0>;
+		clock-frequency = <400000>;
+		pin-sda = <&gpio0 26 GPIO_FLAG_PULL_UP>; // net G9 (module pad 53)
+		pin-scl = <&gpio0 27 GPIO_FLAG_PULL_UP>; // net G8 (module pad 54)
+
+		io_expander0 {
+			compatible = "ti,tca6424a";
+			reg = <0x22>;
+		};
+
+		lcd_power_expander {
+			compatible = "nxp,pca9570";
+			reg = <0x24>; // 7-bit address (0x48 is the 8-bit write address)
+		};
+	};
+
+	i2c_port_a: i2c1 {
+		compatible = "espressif,esp32-i2c-master";
+		port = <I2C_NUM_1>;
+		clock-frequency = <100000>;
+		pin-sda = <&gpio0 53 GPIO_FLAG_PULL_UP>;
+		pin-scl = <&gpio0 54 GPIO_FLAG_PULL_UP>;
+	};
+
+	uart_port_a: uart1 {
+		compatible = "espressif,esp32-uart";
+		status = "disabled";
+		port = <UART_NUM_1>;
+		pin-tx = <&gpio0 51 GPIO_FLAG_NONE>;
+		pin-rx = <&gpio0 52 GPIO_FLAG_NONE>;
+	};
+};

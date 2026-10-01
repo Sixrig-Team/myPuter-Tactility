@@ -1,0 +1,7 @@
+dependencies:
+  - Platforms/platform-esp32
+  - Drivers/tca6424a-module
+  - Drivers/pca9570-module
+  - Drivers/co6300-module
+  - Drivers/cst3530-module
+dts: sixwin,myputer.dts

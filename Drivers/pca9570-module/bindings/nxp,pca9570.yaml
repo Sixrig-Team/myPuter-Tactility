@@ -1,0 +1,5 @@
+description: NXP PCA9570 remote 4-bit general purpose output (GPO) expander
+
+include: ["i2c-device.yaml"]
+
+compatible: "nxp,pca9570"

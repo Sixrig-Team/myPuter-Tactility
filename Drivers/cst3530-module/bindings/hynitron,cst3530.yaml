@@ -1,0 +1,31 @@
+description: >
+  Hynitron CST3530 capacitive touch controller. Supports up to 5 simultaneous touch points.
+  Reset is not driven by this driver.
+
+include: ["i2c-device.yaml"]
+
+compatible: "hynitron,cst3530"
+
+bus: i2c
+
+properties:
+  x-max:
+    type: int
+    required: true
+    description: Horizontal touch resolution
+  y-max:
+    type: int
+    required: true
+    description: Vertical touch resolution
+  swap-xy:
+    type: boolean
+    default: false
+    description: Swap the X and Y axes
+  mirror-x:
+    type: boolean
+    default: false
+    description: Mirror the X axis
+  mirror-y:
+    type: boolean
+    default: false
+    description: Mirror the Y axis
