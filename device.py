@@ -91,7 +91,7 @@ def safe_float(value: str, error_message: str):
         exit_with_error(error_message)
 
 def write_defaults(output_file):
-    default_properties_path = os.path.join("Buildscripts", "sdkconfig", "default.properties")
+    default_properties_path = os.path.join("Buildscripts", "sdkconfig-default.properties")
     default_properties = read_file(default_properties_path)
     output_file.write(default_properties)
 
@@ -268,15 +268,11 @@ def write_lvgl_variable_placeholders(output_file):
     output_file.write("CONFIG_LV_DPI_DEF=100\n")
     output_file.write("CONFIG_LV_FONT_MONTSERRAT_8=y\n")
     output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_8=y\n")
-    output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=8\n")
-    output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=8\n")
-    output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=8\n")
-    output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=12\n")
-    output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=30\n")
-    output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=12\n")
-    # Terminal fonts are currently tied to LVGL settings
-    output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_12=y\n")
-    output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=12\n")
+    output_file.write("CONFIG_TT_FONT_DEFAULT_SIZE=8\n")
+
+def get_montserrat_size(font_size: int) -> int:
+    # LVGL's built-in Montserrat fonts exist in even sizes from 8 to 48
+    return max(8, min(48, (font_size + 1) // 2 * 2))
 
 def write_lvgl_variables(output_file, device_properties: dict):
     output_file.write("# LVGL\n")
@@ -296,100 +292,21 @@ def write_lvgl_variables(output_file, device_properties: dict):
     has_statusbar_colors_inverted = get_boolean_property_or_false(device_properties, "lvgl.statusbarColorsInverted")
     if has_statusbar_colors_inverted:
         output_file.write("CONFIG_TT_LVGL_STATUSBAR_COLORS_INVERTED=y\n")
+    # Tactility uses its own themes (Modules/lvgl-module), and lvgl.theme only selects the default light or dark mode
     theme = get_property_or_default(device_properties, "lvgl.theme", "DefaultDark")
-    if theme == "DefaultDark":
-        output_file.write("CONFIG_LV_THEME_DEFAULT_DARK=y\n")
-    elif theme == "DefaultLight":
-        output_file.write("CONFIG_LV_THEME_DEFAULT_LIGHT=y\n")
-    elif theme == "Mono":
-        output_file.write("CONFIG_LV_USE_THEME_MONO=y\n")
-        # LVGL selects the theme with #if LV_USE_THEME_DEFAULT / #elif LV_USE_THEME_SIMPLE /
-        # #elif LV_USE_THEME_MONO, and the Kconfig defaults enable DEFAULT+SIMPLE for any
-        # non-1bpp color depth so MONO only takes effect once those are disabled.
-        output_file.write("CONFIG_LV_USE_THEME_DEFAULT=n\n")
-        output_file.write("CONFIG_LV_USE_THEME_SIMPLE=n\n")
-    else:
+    if theme not in ("DefaultDark", "DefaultLight", "Mono"):
         exit_with_error(f"Unknown theme: {theme}")
-    font_height_text = get_property_or_default(device_properties, "lvgl.fontSize", "14")
-    font_height = safe_int(font_height_text, f"Font height must be an integer, but was: '{font_height_text}'")
-    if font_height <= 12:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_12=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=12\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_8=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_12=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_16=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_12=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=8\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=12\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=16\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=12\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=30\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=12\n")
-    elif font_height <= 14:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_14=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=14\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_10=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_14=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=10\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=14\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=18\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=16\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=36\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=16\n")
-    elif font_height <= 16:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_16=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=16\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_12=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_16=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_22=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=12\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=16\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=22\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=16\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=42\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=16\n")
-    elif font_height <= 18:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_18=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=18\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_14=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_24=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_18=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=14\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=18\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=24\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=20\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=48\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=20\n")
-    elif font_height <= 24:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_24=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=24\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_18=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_24=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_30=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_24=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=18\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=24\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=30\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=20\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=64\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=24\n")
-    else:
-        output_file.write("CONFIG_TT_FONT_IBMPLEXMONO_28=y\n")
-        output_file.write("CONFIG_TT_TERMINAL_FONT_SIZE=28\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_20=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_28=y\n")
-        output_file.write("CONFIG_LV_FONT_MONTSERRAT_36=y\n")
-        output_file.write("CONFIG_LV_FONT_DEFAULT_MONTSERRAT_28=y\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_SMALL=20\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_DEFAULT=28\n")
-        output_file.write("CONFIG_TT_LVGL_FONT_SIZE_LARGE=36\n")
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_ICON_SIZE=30\n")
-        output_file.write("CONFIG_TT_LVGL_LAUNCHER_ICON_SIZE=72\n")
-        output_file.write("CONFIG_TT_LVGL_SHARED_ICON_SIZE=32\n")
+    output_file.write("CONFIG_LV_USE_THEME_DEFAULT=n\n")
+    output_file.write("CONFIG_LV_USE_THEME_SIMPLE=n\n")
+    output_file.write("CONFIG_LV_USE_THEME_MONO=n\n")
+    font_size_text = get_property_or_none(device_properties, "font.defaultSize")
+    if font_size_text is None:
+        font_size_text = get_property_or_default(device_properties, "lvgl.fontSize", "14")
+    font_size = safe_int(font_size_text, f"Font size must be an integer, but was: '{font_size_text}'")
+    output_file.write(f"CONFIG_TT_FONT_DEFAULT_SIZE={font_size}\n")
+    montserrat_size = get_montserrat_size(font_size)
+    output_file.write(f"CONFIG_LV_FONT_MONTSERRAT_{montserrat_size}=y\n")
+    output_file.write(f"CONFIG_LV_FONT_DEFAULT_MONTSERRAT_{montserrat_size}=y\n")
 
 def write_touch_calibration_variables(output_file, device_properties: dict):
     calibration_supported = get_property_or_none(device_properties, "touch.calibrationSupported")

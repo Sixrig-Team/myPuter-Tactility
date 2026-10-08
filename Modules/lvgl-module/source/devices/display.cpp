@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <lvgl/devices/display.h>
 
+#include <lvgl/lvgl.h>
 #include <lvgl/ppa.h>
+#include <lvgl/theme_private.h>
 
 #include <tactility/device.h>
 #include <tactility/driver.h>
@@ -10,6 +12,7 @@
 
 #include <lvgl/devices/device_context.h>
 
+
 #include <stdlib.h>
 
 #ifdef ESP_PLATFORM
@@ -17,6 +20,14 @@
 #endif
 
 constexpr auto* TAG = "lvgl_display";
+
+// The themes are generated with LSS from Modules/lvgl-module/themes/*.lss
+static void lvgl_display_apply_theme(lv_display_t* disp, struct Device* device, lv_color_format_t color_format) {
+    bool is_mono_display = color_format == LV_COLOR_FORMAT_I1 || color_format == LV_COLOR_FORMAT_L8;
+    // Slow-refresh panels (e-paper) can't show animations
+    bool supports_animations = !display_has_capability(device, DISPLAY_CAPABILITY_SLOW_REFRESH);
+    lv_display_set_theme(disp, lvgl_theme_init_for_display(disp, is_mono_display, supports_animations));
+}
 
 struct LvglDisplayCtx {
     void* buf1;
@@ -469,6 +480,8 @@ error_t lvgl_display_add(struct Device* device, const struct LvglDisplayConfig* 
         delete wrapper;
         return ERROR_OUT_OF_MEMORY;
     }
+
+    lvgl_display_apply_theme(disp, device, lv_color_format);
 
     ctx->render_mode = render_mode;
     lv_display_set_color_format(disp, lv_color_format);

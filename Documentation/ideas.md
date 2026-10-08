@@ -7,7 +7,12 @@
 
 ## Higher Priority
 
-- coreutils apps: Only emit colour escapes when stdout is the terminal (command_support.h color() function)
+- Wi-Fi and Bluetooth settings app: scanning should start and gather results, then it should stop refreshing the scan results automatically. When scanning is finished, a paginated view should be shown with the results (as many as fit on the screen, but not more). There should be an icon on the toolbar to refresh scanning (looking glass? something else?) and this icon is only visible when the radio is enabled. When radio is enabled by the user, automatically start a scan. If the radio was already enabled and the app starts, start scanning.
+- Update to LVGL 9.6.x (ESP-IDF and POSIX)
+- Terminal app: on devices with pointer device: LVGL rendering mode should hide the toolbar by default, but tapping the terminal should toggle the visibility of the toolbar.
+- Terminal app: should always run in non-LVGL mode if no PSRAM is present.
+- Crash app should work without LVGL, like Boot app. It should wait for any input (keyboard or pointer) to continue.
+- NimBLE looses pairing key after reboot
 - CrashDiagnostics shouldn't show a QR when there's no callstack
 - Move USB host task stacks to SPIRAM when available: esp32_usbhost*.cpp
 - Add bold fonts for e-ink readability improvement
@@ -18,8 +23,10 @@
 - TCA9534 keyboards should use interrupts
 - External app loading: Check the version of Tactility and check ESP target hardware to check for compatibility
   Check during installation process, but also when starting (SD card might have old app install from before Tactility OS update)
-- Support direct installation of an `.app` file with `tactility.py install helloworld.app <ip>`
+- Support direct installation of an `.app` file with `tactility.py install --app helloworld.app`
 - minitar/untarFile(): "entry->metadata.path" can escape its confined path (e.g. "../something")
+- xl9555 and tca9534 drivers: support `GPIO_FLAG_ACTIVE_LOW` on outputs in software, like tca95xx does.
+  Afterwards the raw level reset handling in cst66xx and tca8418 can use ACTIVE_LOW too.
 
 ## Medium Priority
 
@@ -32,7 +39,7 @@
 - Improve Setup: Show "Step done" screen
 - Make it more clear to end-users that an SD card is required to run Tactility
 - Warn if file operations are done from prohibited tasks (e.g. lvgl task)
-- stopAppFromToolbar() in Tactility.cpp stops the top-most app. Change it so the toolbar knows for which app id it is created, so it can rely on that.
+- stopAppFromToolbar() in lvgl/Lvgl.cpp stops the top-most app. Change it so the toolbar knows for which app id it is created, so it can rely on that.
 - Consider not unpacking `.app` files and executing them directly. Might want to cache file offsets. Cache file must be pinned to app version.
 - lvgl-module's spinner relies on hard-coded spinner asset from Tactility main project.
 - esp_lvgl_port settings has a large stack size (~9kB) to fix stackoverflow when LVGL events (e.g. button click) do actions like file operations do actions like file operations. Can we reduce the callstack?

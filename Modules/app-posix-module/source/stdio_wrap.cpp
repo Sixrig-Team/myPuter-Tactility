@@ -5,11 +5,15 @@
 // a dlopen()ed app's own printf/write calls, so these wraps are installed under their real names instead
 // - dyld interpose on Apple (stdio_wrap_apple.cpp), plain strong definitions elsewhere (stdio_wrap_elf.cpp).
 // app-module's io.cpp falls through to the __real_read/__real_write/__real_close defined here.
+#include <app_posix/malloc_wrap.h>
 #include <app_posix/stdio_wrap.h>
 
 #include <app/io.h>
 #include <app/libc.h>
 #include <app/scheduler.h>
+#include <app/signal.h>
+
+#include <tactility/paths.h>
 
 #include <cerrno>
 #include <cstring>
@@ -83,18 +87,51 @@ int __real_kill(pid_t pid, int sig) {
     return real(pid, sig);
 }
 
+pid_t __real_getpid() {
+    static auto real = reinterpret_cast<pid_t (*)()>(dlsym(RTLD_NEXT, "getpid"));
+    return real();
+}
+
+pid_t __real_getppid() {
+    static auto real = reinterpret_cast<pid_t (*)()>(dlsym(RTLD_NEXT, "getppid"));
+    return real();
+}
+
+int __real_usleep(useconds_t usec) {
+    static auto real = reinterpret_cast<int (*)(useconds_t)>(dlsym(RTLD_NEXT, "usleep"));
+    return real(usec);
+}
+
+unsigned int __real_sleep(unsigned int seconds) {
+    static auto real = reinterpret_cast<unsigned int (*)(unsigned int)>(dlsym(RTLD_NEXT, "sleep"));
+    return real(seconds);
+}
+
 [[noreturn]] void __real_exit(int status) {
     static auto real = reinterpret_cast<void (*)(int)>(dlsym(RTLD_NEXT, "exit"));
     real(status);
     __builtin_unreachable();
 }
 
+// Pending signals are delivered at the entry of these wraps, and again when a call was interrupted
+// by one, since the app holds no lock of the system itself there.
+
 ssize_t __wrap_read(int fd, void* buffer, size_t size) {
-    return app_io_read(fd, buffer, size);
+    app_signal_deliver_pending();
+    const ssize_t result = app_io_read(fd, buffer, size);
+    if (result < 0 && errno == EINTR) {
+        app_signal_deliver_pending();
+    }
+    return result;
 }
 
 ssize_t __wrap_write(int fd, const void* buffer, size_t size) {
-    return app_io_write(fd, buffer, size);
+    app_signal_deliver_pending();
+    const ssize_t result = app_io_write(fd, buffer, size);
+    if (result < 0 && errno == EINTR) {
+        app_signal_deliver_pending();
+    }
+    return result;
 }
 
 int __wrap_close(int fd) {
@@ -139,8 +176,12 @@ int __wrap_fstat(int fd, struct stat* st) {
 }
 
 int __wrap_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
+    app_signal_deliver_pending();
     int result;
     if (app_libc_try_poll(fds, nfds, timeout, __real_poll, &result)) {
+        if (result < 0 && errno == EINTR) {
+            app_signal_deliver_pending();
+        }
         return result;
     }
     return __real_poll(fds, nfds, timeout);
@@ -175,15 +216,294 @@ AppLibcSignalHandler __wrap_signal(int sig, AppLibcSignalHandler handler) {
 int __wrap_kill(pid_t pid, int sig) {
     int result;
     if (app_libc_try_kill(pid, sig, &result)) {
+        // A signal sent to the app itself is delivered before kill() returns
+        app_signal_deliver_pending();
         return result;
     }
     return __real_kill(pid, sig);
+}
+
+pid_t __wrap_getpid() {
+    int result;
+    if (app_libc_try_getpid(&result)) {
+        return result;
+    }
+    return __real_getpid();
+}
+
+pid_t __wrap_getppid() {
+    int result;
+    if (app_libc_try_getppid(&result)) {
+        return result;
+    }
+    return __real_getppid();
+}
+
+int __wrap_usleep(useconds_t usec) {
+    app_signal_deliver_pending();
+    int result;
+    if (app_libc_try_usleep(usec, &result)) {
+        app_signal_deliver_pending();
+        return result;
+    }
+    return __real_usleep(usec);
+}
+
+unsigned int __wrap_sleep(unsigned int seconds) {
+    app_signal_deliver_pending();
+    unsigned int result;
+    if (app_libc_try_sleep(seconds, &result)) {
+        app_signal_deliver_pending();
+        return result;
+    }
+    return __real_sleep(seconds);
 }
 
 // Called by an app, the real exit() would end the whole simulator
 void __wrap_exit(int status) {
     app_scheduler_exit_current(status);
     __real_exit(status);
+}
+
+}
+
+// endregion
+
+// region path wraps
+//
+// The process has a single cwd, so the relative paths of an app binary's own calls are resolved against
+// the app instance's cwd first (see app/libc.h). Every other caller's paths are passed on as-is.
+
+namespace {
+
+// Set by AppPathCallScope. Never set on Apple platforms, where the caller can't be identified.
+thread_local bool app_path_call = false;
+
+/**
+ * @return the path to pass on: resolved for an app binary's own call, as-is otherwise.
+ * NULL when the resolved path doesn't fit (errno is set to ENAMETOOLONG).
+ */
+const char* resolvePath(const char* path, char (&buffer)[FILE_MAX_PATH_STRING_LENGTH]) {
+    if (!app_path_call) {
+        return path;
+    }
+    const char* resolved;
+    return app_libc_try_resolve_path(path, buffer, sizeof(buffer), &resolved) ? resolved : path;
+}
+
+/** open() only reads its mode argument when it can create a file */
+bool openNeedsMode(int flags) {
+#ifdef O_TMPFILE
+    if ((flags & O_TMPFILE) == O_TMPFILE) {
+        return true;
+    }
+#endif
+    return (flags & O_CREAT) != 0;
+}
+
+} // namespace
+
+AppPathCallScope::AppPathCallScope(const void* caller) : previous(app_path_call) {
+    app_path_call = app_posix_is_app_caller(caller);
+}
+
+AppPathCallScope::~AppPathCallScope() {
+    app_path_call = previous;
+}
+
+extern "C" {
+
+int __real_open(const char* path, int flags, mode_t mode) {
+    static auto real = reinterpret_cast<int (*)(const char*, int, ...)>(dlsym(RTLD_NEXT, "open"));
+    return real(path, flags, mode);
+}
+
+FILE* __real_fopen(const char* path, const char* mode) {
+    static auto real = reinterpret_cast<FILE* (*)(const char*, const char*)>(dlsym(RTLD_NEXT, "fopen"));
+    return real(path, mode);
+}
+
+int __real_stat(const char* path, struct stat* st) {
+    static auto real = reinterpret_cast<int (*)(const char*, struct stat*)>(dlsym(RTLD_NEXT, "stat"));
+    return real(path, st);
+}
+
+int __real_lstat(const char* path, struct stat* st) {
+    static auto real = reinterpret_cast<int (*)(const char*, struct stat*)>(dlsym(RTLD_NEXT, "lstat"));
+    return real(path, st);
+}
+
+int __real_access(const char* path, int mode) {
+    static auto real = reinterpret_cast<int (*)(const char*, int)>(dlsym(RTLD_NEXT, "access"));
+    return real(path, mode);
+}
+
+int __real_unlink(const char* path) {
+    static auto real = reinterpret_cast<int (*)(const char*)>(dlsym(RTLD_NEXT, "unlink"));
+    return real(path);
+}
+
+int __real_remove(const char* path) {
+    static auto real = reinterpret_cast<int (*)(const char*)>(dlsym(RTLD_NEXT, "remove"));
+    return real(path);
+}
+
+int __real_rename(const char* src, const char* dst) {
+    static auto real = reinterpret_cast<int (*)(const char*, const char*)>(dlsym(RTLD_NEXT, "rename"));
+    return real(src, dst);
+}
+
+int __real_mkdir(const char* path, mode_t mode) {
+    static auto real = reinterpret_cast<int (*)(const char*, mode_t)>(dlsym(RTLD_NEXT, "mkdir"));
+    return real(path, mode);
+}
+
+int __real_rmdir(const char* path) {
+    static auto real = reinterpret_cast<int (*)(const char*)>(dlsym(RTLD_NEXT, "rmdir"));
+    return real(path);
+}
+
+DIR* __real_opendir(const char* path) {
+    static auto real = reinterpret_cast<DIR* (*)(const char*)>(dlsym(RTLD_NEXT, "opendir"));
+    return real(path);
+}
+
+int __real_fclose(FILE* file) {
+    static auto real = reinterpret_cast<int (*)(FILE*)>(dlsym(RTLD_NEXT, "fclose"));
+    return real(file);
+}
+
+FILE* __real_fdopen(int fd, const char* mode) {
+    static auto real = reinterpret_cast<FILE* (*)(int, const char*)>(dlsym(RTLD_NEXT, "fdopen"));
+    return real(fd, mode);
+}
+
+int __real_closedir(DIR* dir) {
+    static auto real = reinterpret_cast<int (*)(DIR*)>(dlsym(RTLD_NEXT, "closedir"));
+    return real(dir);
+}
+
+int __real_truncate(const char* path, off_t length) {
+    static auto real = reinterpret_cast<int (*)(const char*, off_t)>(dlsym(RTLD_NEXT, "truncate"));
+    return real(path, length);
+}
+
+int __wrap_open(const char* path, int flags, ...) {
+    mode_t mode = 0;
+    if (openNeedsMode(flags)) {
+        va_list args;
+        va_start(args, flags);
+        mode = static_cast<mode_t>(va_arg(args, int));
+        va_end(args);
+    }
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_open(resolved, flags, mode);
+}
+
+// libc's own fopen() calls an internal open() alias, which the open() wrap can't reach
+FILE* __wrap_fopen(const char* path, const char* mode) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return nullptr;
+    }
+    return __real_fopen(resolved, mode);
+}
+
+int __wrap_stat(const char* path, struct stat* st) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_stat(resolved, st);
+}
+
+int __wrap_lstat(const char* path, struct stat* st) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_lstat(resolved, st);
+}
+
+int __wrap_access(const char* path, int mode) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_access(resolved, mode);
+}
+
+int __wrap_unlink(const char* path) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_unlink(resolved);
+}
+
+int __wrap_remove(const char* path) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_remove(resolved);
+}
+
+int __wrap_rename(const char* src, const char* dst) {
+    char src_buffer[FILE_MAX_PATH_STRING_LENGTH];
+    char dst_buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved_src = resolvePath(src, src_buffer);
+    const char* resolved_dst = resolvePath(dst, dst_buffer);
+    if (resolved_src == nullptr || resolved_dst == nullptr) {
+        return -1;
+    }
+    return __real_rename(resolved_src, resolved_dst);
+}
+
+int __wrap_mkdir(const char* path, mode_t mode) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_mkdir(resolved, mode);
+}
+
+int __wrap_rmdir(const char* path) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_rmdir(resolved);
+}
+
+DIR* __wrap_opendir(const char* path) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return nullptr;
+    }
+    return __real_opendir(resolved);
+}
+
+int __wrap_truncate(const char* path, off_t length) {
+    char buffer[FILE_MAX_PATH_STRING_LENGTH];
+    const char* resolved = resolvePath(path, buffer);
+    if (resolved == nullptr) {
+        return -1;
+    }
+    return __real_truncate(resolved, length);
 }
 
 }
@@ -238,11 +558,15 @@ namespace {
 
 /** @return the number of bytes written, less than `size` if the fd stopped accepting data */
 size_t writeAllTo(int fd, const void* data, size_t size) {
+    app_signal_deliver_pending();
     const auto* bytes = static_cast<const char*>(data);
     size_t remaining = size;
     while (remaining > 0) {
         ssize_t written = app_io_write(fd, bytes, remaining);
         if (written <= 0) {
+            if (written < 0 && errno == EINTR) {
+                app_signal_deliver_pending();
+            }
             break;
         }
         bytes += written;
@@ -274,7 +598,7 @@ int formatTo(int fd, const char* format, va_list args) {
 }
 
 int readOneFromStdin(char& out) {
-    return static_cast<int>(app_io_read(STDIN_FILENO, &out, 1));
+    return static_cast<int>(__wrap_read(STDIN_FILENO, &out, 1));
 }
 
 // The process' own streams, captured before anything can reassign stdin/stdout/stderr. A caller

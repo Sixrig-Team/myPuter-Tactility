@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <lvgl/binfont.h>
 #include <lvgl/fonts.h>
 #include <lvgl/lvgl.h>
 #include <lvgl/module.h>
 
 #include <lvgl/devices/display.h>
+#include <lvgl/devices/indev.h>
 #include <lvgl/devices/keyboard.h>
 #include <lvgl/devices/pointer.h>
 
 #include <lvgl/widgets/sliderbox.h>
+#include <lvgl/grid_navigation.h>
+#include <lvgl/insets.h>
+#include <lvgl/theme.h>
+#include <lvgl/widgets/badge.h>
+#include <lvgl/widgets/card.h>
+#include <lvgl/widgets/chip.h>
+#include <lvgl/widgets/icon_button.h>
+#include <lvgl/widgets/page_indicator.h>
 #include <lvgl/widgets/spinner.h>
 #include <lvgl/widgets/toolbar.h>
 
@@ -25,9 +35,14 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     // lvgl module
     DEFINE_MODULE_SYMBOL(lvgl_module),
     DEFINE_MODULE_SYMBOL(lvgl_module_configure),
+    // lvgl_binfont
+    DEFINE_MODULE_SYMBOL(lvgl_binfont_create),
+    DEFINE_MODULE_SYMBOL(lvgl_binfont_destroy),
     // lvgl_fonts
-    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_font),
-    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_font_height),
+    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_default_font),
+    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_default_font_height),
+    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_large_font),
+    DEFINE_MODULE_SYMBOL(lvgl_get_shared_icon_large_font_height),
     DEFINE_MODULE_SYMBOL(lvgl_get_text_font),
     DEFINE_MODULE_SYMBOL(lvgl_get_text_font_height),
     DEFINE_MODULE_SYMBOL(lvgl_get_launcher_icon_font),
@@ -37,6 +52,8 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     // lvgl_display
     DEFINE_MODULE_SYMBOL(lvgl_display_add),
     DEFINE_MODULE_SYMBOL(lvgl_display_remove),
+    // lvgl_indev
+    DEFINE_MODULE_SYMBOL(lvgl_indev_exists),
     // lvgl_keyboard
     DEFINE_MODULE_SYMBOL(lvgl_keyboard_add),
     DEFINE_MODULE_SYMBOL(lvgl_keyboard_remove),
@@ -47,6 +64,36 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lvgl_pointer_add),
     DEFINE_MODULE_SYMBOL(lvgl_pointer_get_slot_index),
     DEFINE_MODULE_SYMBOL(lvgl_pointer_remove),
+    // lvgl_grid_navigation
+    DEFINE_MODULE_SYMBOL(lvgl_grid_navigation_add),
+    DEFINE_MODULE_SYMBOL(lvgl_grid_navigation_remove),
+    DEFINE_MODULE_SYMBOL(lvgl_grid_navigation_step),
+    DEFINE_MODULE_SYMBOL(lvgl_grid_navigation_get_focused),
+    DEFINE_MODULE_SYMBOL(lvgl_grid_navigation_is_container),
+    DEFINE_MODULE_SYMBOL(lvgl_focus_hide_key_selection),
+    // lvgl_insets
+    DEFINE_MODULE_SYMBOL(lvgl_display_get_shape),
+    DEFINE_MODULE_SYMBOL(lvgl_display_get_insets),
+    DEFINE_MODULE_SYMBOL(lvgl_display_get_row_inset),
+    DEFINE_MODULE_SYMBOL(lvgl_obj_add_edge_padding),
+    // lvgl_theme
+    DEFINE_MODULE_SYMBOL(lvgl_theme_get_settings),
+    DEFINE_MODULE_SYMBOL(lvgl_theme_get_default_settings),
+    DEFINE_MODULE_SYMBOL(lvgl_theme_set_settings),
+    DEFINE_MODULE_SYMBOL(lvgl_theme_is_mono),
+    DEFINE_MODULE_SYMBOL(lvgl_theme_is_compact),
+    // lvgl_badge
+    DEFINE_MODULE_SYMBOL(lvgl_badge_create),
+    DEFINE_MODULE_SYMBOL(lvgl_page_indicator_create),
+    DEFINE_MODULE_SYMBOL(lvgl_page_indicator_set_page_count),
+    DEFINE_MODULE_SYMBOL(lvgl_page_indicator_set_page),
+    // lvgl_card
+    DEFINE_MODULE_SYMBOL(lvgl_card_create),
+    // lvgl_chip
+    DEFINE_MODULE_SYMBOL(lvgl_chip_create),
+    // lvgl_icon_button
+    DEFINE_MODULE_SYMBOL(lvgl_icon_button_create),
+    DEFINE_MODULE_SYMBOL(lvgl_icon_button_create_variant),
     // lvgl_spinner
     DEFINE_MODULE_SYMBOL(lvgl_spinner_create),
     // lvgl_toolbar

@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <tactility/drivers/display.h>
+
+struct BinFont;
 struct Device;
 struct PixelBuffer;
 
@@ -18,11 +21,18 @@ struct PixelBuffer;
  * per-row push would show a mix of stale and fresh rows, since a hw double buffer's zero-copy
  * path flips on any write regardless of the sub-rect given.
  *
- * Must be used only while LVGL is stopped, since it writes to the display directly.
+ * Must be used only while LVGL is stopped, since it writes to the display directly. The exception
+ * is TerminalRendererLvgl, which draws into an LVGL canvas instead.
  */
 class TerminalRenderer {
 public:
     virtual ~TerminalRenderer() = default;
+
+    /**
+     * Sets the monospace font to draw with. The cell size is the advance width of 'M' by the font's
+     * line height. Must be called before begin(), and the font must outlive end().
+     */
+    void setFont(BinFont* font) { this->font = font; }
 
     /** Allocates buffers. Glyphs are drawn at native size, never scaled. */
     virtual bool begin(Device* display) = 0;
@@ -40,6 +50,9 @@ public:
     int columns() const { return cols; }
     int rows() const { return rowCount; }
 
+    /** False while the terminal is not on screen, e.g. when another app's window covers it. */
+    virtual bool isShown() const { return true; }
+
 protected:
     void paintCell(int row, int col, char ch, uint8_t attr);
     void paintCursor(int row, int col);
@@ -56,6 +69,9 @@ protected:
      * The subclass must set display/panelWidth/panelHeight/frameWidth/frameHeight first.
      */
     bool allocateCommon(Device* display);
+
+    /** Like allocateCommon(Device*), but with frameBuffer in the given format instead of the display's. */
+    bool allocateCommon(Device* display, enum DisplayColorFormat frameColorFormat);
 
     /** Frees frameBuffer, fullFrameBuffer, shadow, and the borrowed hw double buffer, if any. */
     void freeCommon();
@@ -104,8 +120,7 @@ protected:
 
     Device* display = nullptr;
 
-    // True for a monochrome display. frameBuffer/hwFrameBuffers/fullFrameBuffer format-handling
-    // all lives in graphics-module now (see paintCell()/presentRegion()).
+    // True for a monochrome display. paintCell() then draws every non-black colour as white.
     bool monochrome = false;
 
     // Scratch buffer glyphs are painted into before being pushed. Sized for one text row, not the
@@ -153,8 +168,14 @@ protected:
     int cols = 0;
     int rowCount = 0;
 
-    // Cell size on screen. Glyphs are drawn at native size, so this equals TT_TERMINAL_FONT_SYMBOL's
-    // glyph_width/glyph_height (see TerminalRenderer.cpp).
+    BinFont* font = nullptr;
+    /** Alpha (0-255) of each printable ASCII glyph, cellWidth x cellHeight per glyph */
+    uint8_t* glyphMasks = nullptr;
+
+    /** Rasterizes the printable ASCII glyphs into glyphMasks */
+    bool createGlyphMasks();
+
+    // Cell size on screen. Glyphs are drawn at native size, so this is derived from the font metrics.
     int cellWidth = 0;
     int cellHeight = 0;
 

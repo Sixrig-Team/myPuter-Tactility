@@ -94,17 +94,17 @@ if (DEFINED ENV{ESP_IDF_VERSION})
 
     # opendir()/readdir()/closedir() also define the plain names directly (vfs_calls.c).
     # Wrapped so opendir("/") synthesizes a listing of own registered filesystems instead of ENOENT.
-    # See Platforms/platform-esp32/source/root_dir.cpp.
+    # See Modules/app-esp32-module/source/root_dir.cpp.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=opendir" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=readdir" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=closedir" APPEND)
 
     # mkdir() is an alias in vfs_calls.c. Wrapped so an existing mount root reports EEXIST.
-    # See Platforms/platform-esp32/source/mkdir.cpp.
+    # See Modules/app-esp32-module/source/path_wrap.cpp.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=mkdir" APPEND)
 
-    # Path-based VFS calls are aliases in vfs_calls.c. Wrapped so a NULL path fails with EFAULT instead of crashing.
-    # See Platforms/platform-esp32/source/vfs_null_path.cpp.
+    # Path-based VFS calls are aliases in vfs_calls.c. Wrapped so an app's relative path is resolved against its cwd,
+    # and a NULL path fails with EFAULT instead of crashing. See Modules/app-esp32-module/source/path_wrap.cpp.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_open_r" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_stat_r" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=_link_r" APPEND)
@@ -115,13 +115,6 @@ if (DEFINED ENV{ESP_IDF_VERSION})
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=utime" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=rmdir" APPEND)
 
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_button_create" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_dropdown_create" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_list_create" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_list_add_button" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_obj_create" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_obj_set_flex_flow" APPEND)
-    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_switch_create" APPEND)
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=lv_textarea_create" APPEND)
 
 else ()
@@ -170,6 +163,8 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Libraries/minmea)
     add_subdirectory(Modules/lvgl-module)
     add_subdirectory(Modules/audio-decoder-module)
+    add_subdirectory(Modules/binfont-module)
+    add_subdirectory(Modules/lodepng-module)
     add_subdirectory(Modules/c-symbols-module)
     add_subdirectory(Modules/cjson-module)
     add_subdirectory(Modules/cpp-symbols-module)
@@ -198,6 +193,13 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     set(FREERTOS_PORT GCC_POSIX CACHE STRING "")
     add_subdirectory(Libraries/FreeRTOS-Kernel)
     target_compile_definitions(freertos_kernel PUBLIC "projCOVERAGE_TEST=0")
+    # xTaskCreate() and vTaskDelete() are defined by freertos_task_hooks.c instead, see its header
+    set_source_files_properties(Libraries/FreeRTOS-Kernel/tasks.c
+        TARGET_DIRECTORY freertos_kernel
+        PROPERTIES COMPILE_DEFINITIONS "xTaskCreate=freertos_real_xTaskCreate;vTaskDelete=freertos_real_vTaskDelete"
+    )
+    target_sources(freertos_kernel PRIVATE Platforms/platform-posix/freertos/freertos_task_hooks.c)
+    target_include_directories(freertos_kernel PUBLIC Platforms/platform-posix/freertos)
 
     # EmbedTLS
     set(ENABLE_TESTING OFF)

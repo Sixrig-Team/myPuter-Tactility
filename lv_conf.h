@@ -367,11 +367,11 @@
 /*Montserrat fonts with ASCII range and some symbols using bpp = 4
  *https://fonts.google.com/specimen/Montserrat*/
 #define LV_FONT_MONTSERRAT_8  0
-#define LV_FONT_MONTSERRAT_10 1
+#define LV_FONT_MONTSERRAT_10 0
 #define LV_FONT_MONTSERRAT_12 0
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 0
-#define LV_FONT_MONTSERRAT_18 1
+#define LV_FONT_MONTSERRAT_18 0
 #define LV_FONT_MONTSERRAT_20 0
 #define LV_FONT_MONTSERRAT_22 0
 #define LV_FONT_MONTSERRAT_24 0
@@ -557,22 +557,13 @@
  * THEMES
  *==================*/
 
+/*Tactility uses its own themes (Modules/lvgl-module), so LVGL's themes are disabled*/
+
 /*A simple, impressive and very complete theme*/
-#define LV_USE_THEME_DEFAULT 1
-#if LV_USE_THEME_DEFAULT
-
-    /*0: Light mode; 1: Dark mode*/
-    #define LV_THEME_DEFAULT_DARK 1
-
-    /*1: Enable grow on press*/
-    #define LV_THEME_DEFAULT_GROW 1
-
-    /*Default transition time in [ms]*/
-    #define LV_THEME_DEFAULT_TRANSITION_TIME 80
-#endif /*LV_USE_THEME_DEFAULT*/
+#define LV_USE_THEME_DEFAULT 0
 
 /*A very simple theme that is a good starting point for a custom theme*/
-#define LV_USE_THEME_SIMPLE 1
+#define LV_USE_THEME_SIMPLE 0
 
 /*A theme designed for monochrome displays*/
 #define LV_USE_THEME_MONO 0
@@ -631,7 +622,7 @@
 #endif
 
 /*LODEPNG decoder library*/
-#define LV_USE_LODEPNG 1
+#define LV_USE_LODEPNG 0
 
 /*PNG decoder(libpng) library*/
 #define LV_USE_LIBPNG 0
@@ -782,7 +773,7 @@
 #define LV_USE_MONKEY 0
 
 /*1: Enable grid navigation*/
-#define LV_USE_GRIDNAV 0
+#define LV_USE_GRIDNAV 1
 
 /*1: Enable lv_obj fragment*/
 #define LV_USE_FRAGMENT 0

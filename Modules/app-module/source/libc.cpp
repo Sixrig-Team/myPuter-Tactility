@@ -3,8 +3,10 @@
 
 #include <app/dir.h>
 #include <app/io.h>
+#include <app/manager.h>
 #include <app/private/ledger.h>
 #include <app/scheduler.h>
+#include <app/signal.h>
 
 #include <tactility/delay.h>
 #include <tactility/paths.h>
@@ -17,6 +19,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -43,6 +46,66 @@ AppFdState get_app_fd_state(int fd) {
 
 // Upper bound on wake latency while waiting on more than one fd: app streams can only be awaited one at a time.
 constexpr TickType_t POLL_INTERVAL_TICKS = pdMS_TO_TICKS(10);
+
+// Upper bound on how long a sleep or poll takes to notice a signal (see app/signal.h)
+constexpr TickType_t SIGNAL_CHECK_INTERVAL_TICKS = pdMS_TO_TICKS(100);
+
+/**
+ * @param[out] out_remaining the ticks not slept
+ * @return true when interrupted by a signal
+ */
+bool sleep_unless_signalled(TickType_t ticks, TickType_t* out_remaining) {
+    const TickType_t start = get_ticks();
+    while (true) {
+        const TickType_t remaining = get_timeout_remaining_ticks(ticks, start);
+        *out_remaining = remaining;
+        if (app_signal_is_pending()) {
+            return true;
+        }
+        if (remaining == 0) {
+            return false;
+        }
+        delay_ticks(remaining < SIGNAL_CHECK_INTERVAL_TICKS ? remaining : SIGNAL_CHECK_INTERVAL_TICKS);
+    }
+}
+
+#ifdef ESP_PLATFORM
+/**
+ * Collapses the ".", ".." and empty segments of an absolute path, in place.
+ * Every segment written is preceded by a '/' that was read, so writing never overtakes reading.
+ */
+void normalize_path(char* path) {
+    size_t length = 0;
+    const char* segment = path;
+    while (*segment != '\0') {
+        while (*segment == '/') {
+            segment++;
+        }
+        const char* end = segment;
+        while (*end != '\0' && *end != '/') {
+            end++;
+        }
+        const size_t segment_length = end - segment;
+        if (segment_length == 2 && segment[0] == '.' && segment[1] == '.') {
+            while (length > 0 && path[length - 1] != '/') {
+                length--;
+            }
+            if (length > 0) {
+                length--; // the '/' before the removed segment
+            }
+        } else if (segment_length > 0 && !(segment_length == 1 && segment[0] == '.')) {
+            path[length++] = '/';
+            memmove(path + length, segment, segment_length);
+            length += segment_length;
+        }
+        segment = end;
+    }
+    if (length == 0) {
+        path[length++] = '/';
+    }
+    path[length] = '\0';
+}
+#endif
 
 } // namespace
 
@@ -93,34 +156,86 @@ bool app_libc_try_getcwd(char* buf, size_t size, char** out_result) {
     return false; // ERROR_NOT_FOUND: not an app instance.
 }
 
-// app_dir_set_cwd() requires an already-absolute path and reports both "not an app instance" and
-// "no such directory" as ERROR_NOT_FOUND, so app_dir_get_cwd() is used first as an unambiguous
-// "is this an app instance" probe (it's needed anyway, to resolve a relative path).
-bool app_libc_try_chdir(const char* path, int* out_result) {
-    if (path == nullptr || path[0] == '\0') {
+// The cwd is written to buf directly and the path appended to it, so a relative path needs no second buffer.
+bool app_libc_try_resolve_path(const char* path, char* buf, size_t size, const char** out_path) {
+    // Checked before app_dir_get_cwd() takes the ledger's lock: every path-based libc call in the
+    // process ends up here, including the simulator's foreign threads (e.g. SDL's) and early boot.
+    if (path == nullptr || path[0] == '\0' || app_scheduler_current_app_id() == 0) {
         return false;
     }
-    char cwd[FILE_MAX_PATH_STRING_LENGTH];
-    if (app_dir_get_cwd(cwd, sizeof(cwd)) != ERROR_NONE) {
+    const error_t cwd_result = app_dir_get_cwd(buf, size);
+    if (cwd_result == ERROR_NOT_FOUND) {
         return false; // not an app instance
     }
 
+    const size_t path_length = strlen(path);
+    if (path[0] == '/') {
+        if (path_length >= size) {
+            errno = ENAMETOOLONG;
+            *out_path = nullptr;
+            return true;
+        }
+        memcpy(buf, path, path_length + 1);
+    } else {
+        const size_t cwd_length = (cwd_result == ERROR_NONE) ? strlen(buf) : size;
+        // No separator after the root, which already ends with one
+        const size_t separator_length = (cwd_length > 0 && cwd_length < size && buf[cwd_length - 1] == '/') ? 0 : 1;
+        if (cwd_length + separator_length + path_length >= size) {
+            errno = ENAMETOOLONG;
+            *out_path = nullptr;
+            return true;
+        }
+        if (separator_length != 0) {
+            buf[cwd_length] = '/';
+        }
+        memcpy(buf + cwd_length + separator_length, path, path_length + 1);
+    }
+
+#ifdef ESP_PLATFORM
+    normalize_path(buf);
+#endif
+    *out_path = buf;
+    return true;
+}
+
+// app_dir_set_cwd() requires an already-absolute path and reports both "not an app instance" and
+// "no such directory" as ERROR_NOT_FOUND, so the path is resolved first, which also tells the two apart.
+bool app_libc_try_chdir(const char* path, int* out_result) {
     char resolved[FILE_MAX_PATH_STRING_LENGTH];
-    const int written = (path[0] == '/') ? snprintf(resolved, sizeof(resolved), "%s", path)
-        : (strcmp(cwd, "/") == 0) ? snprintf(resolved, sizeof(resolved), "/%s", path)
-        : snprintf(resolved, sizeof(resolved), "%s/%s", cwd, path);
-    if (written < 0 || static_cast<size_t>(written) >= sizeof(resolved)) {
-        errno = ENAMETOOLONG;
+    const char* resolved_path;
+    if (!app_libc_try_resolve_path(path, resolved, sizeof(resolved), &resolved_path)) {
+        return false;
+    }
+    if (resolved_path == nullptr) {
         *out_result = -1;
         return true;
     }
 
-    if (app_dir_set_cwd(resolved) == ERROR_NONE) {
+#ifdef ESP_PLATFORM
+    if (app_dir_set_cwd(resolved_path) == ERROR_NONE) {
         *out_result = 0;
     } else {
         errno = ENOENT;
         *out_result = -1;
     }
+#else
+    // The cwd is kept physical, like the kernel's own: ".." in the path follows symlinks
+    char* canonical = realpath(resolved_path, nullptr);
+    if (canonical == nullptr) {
+        *out_result = -1;
+        return true;
+    }
+    if (strlen(canonical) > FILE_MAX_PATH_LENGTH) {
+        errno = ENAMETOOLONG;
+        *out_result = -1;
+    } else if (app_dir_set_cwd(canonical) == ERROR_NONE) {
+        *out_result = 0;
+    } else {
+        errno = ENOTDIR;
+        *out_result = -1;
+    }
+    free(canonical);
+#endif
     return true;
 }
 
@@ -232,8 +347,79 @@ bool app_libc_try_kill(int pid, int sig, int* out_result) {
     if (app_scheduler_current_app_id() == 0) {
         return false;
     }
-    errno = ENOSYS;
-    *out_result = -1;
+    if (sig < 0 || sig >= APP_LIBC_SIGNAL_COUNT || sig == SIGKILL || sig == SIGSTOP) {
+        errno = EINVAL;
+        *out_result = -1;
+        return true;
+    }
+    const bool exists = pid > 0 && app_manager_get_state(static_cast<AppInstanceId>(pid)) != APP_INSTANCE_STATE_STOPPED;
+    if (!exists) {
+        errno = ESRCH;
+        *out_result = -1;
+        return true;
+    }
+    const error_t result = (sig == 0) ? ERROR_NONE : app_signal_send(static_cast<AppInstanceId>(pid), sig);
+    switch (result) {
+        case ERROR_NONE:
+            *out_result = 0;
+            break;
+        case ERROR_NOT_FOUND:
+            errno = ESRCH;
+            *out_result = -1;
+            break;
+        default:
+            errno = EAGAIN;
+            *out_result = -1;
+            break;
+    }
+    return true;
+}
+
+bool app_libc_try_getpid(int* out_result) {
+    const AppInstanceId app_instance_id = app_scheduler_current_app_id();
+    if (app_instance_id == 0) {
+        return false;
+    }
+    *out_result = static_cast<int>(app_instance_id);
+    return true;
+}
+
+bool app_libc_try_getppid(int* out_result) {
+    const AppInstanceId app_instance_id = app_scheduler_current_app_id();
+    if (app_instance_id == 0) {
+        return false;
+    }
+    auto& ledger = app_ledger();
+    mutex_lock(&ledger.mutex);
+    auto iterator = ledger.instances.find(app_instance_id);
+    const uint32_t parent_id = (iterator != ledger.instances.end()) ? iterator->second.parent_id : 0;
+    mutex_unlock(&ledger.mutex);
+    *out_result = static_cast<int>(parent_id);
+    return true;
+}
+
+bool app_libc_try_usleep(unsigned long usec, int* out_result) {
+    if (app_scheduler_current_app_id() == 0) {
+        return false;
+    }
+    const auto ticks = static_cast<TickType_t>((static_cast<uint64_t>(usec) * configTICK_RATE_HZ + 999999) / 1000000);
+    TickType_t remaining;
+    if (sleep_unless_signalled(ticks, &remaining)) {
+        errno = EINTR;
+        *out_result = -1;
+    } else {
+        *out_result = 0;
+    }
+    return true;
+}
+
+bool app_libc_try_sleep(unsigned int seconds, unsigned int* out_result) {
+    if (app_scheduler_current_app_id() == 0) {
+        return false;
+    }
+    TickType_t remaining;
+    sleep_unless_signalled(static_cast<TickType_t>(static_cast<uint64_t>(seconds) * configTICK_RATE_HZ), &remaining);
+    *out_result = static_cast<unsigned int>(remaining / configTICK_RATE_HZ);
     return true;
 }
 
@@ -264,6 +450,11 @@ bool app_libc_try_poll(struct pollfd* fds, nfds_t nfds, int timeout, AppLibcPoll
     const TickType_t start = get_ticks();
     const TickType_t timeout_ticks = (timeout < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout);
     while (true) {
+        if (app_signal_is_pending()) {
+            errno = EINTR;
+            *out_result = -1;
+            return true;
+        }
         int ready = 0;
         for (nfds_t i = 0; i < nfds; i++) {
             fds[i].revents = 0;
@@ -302,10 +493,11 @@ bool app_libc_try_poll(struct pollfd* fds, nfds_t nfds, int timeout, AppLibcPoll
             remaining = POLL_INTERVAL_TICKS;
         }
         const struct pollfd& first = fds[first_app_index];
+        const TickType_t wait_ticks = remaining < SIGNAL_CHECK_INTERVAL_TICKS ? remaining : SIGNAL_CHECK_INTERVAL_TICKS;
         if (first.events & POLLIN) {
-            app_io_await(first.fd, APP_FILE_WAIT_READABLE, remaining);
+            app_io_await(first.fd, APP_FILE_WAIT_READABLE, wait_ticks);
         } else if (first.events & POLLOUT) {
-            app_io_await(first.fd, APP_FILE_WAIT_WRITABLE, remaining);
+            app_io_await(first.fd, APP_FILE_WAIT_WRITABLE, wait_ticks);
         } else {
             delay_ticks(remaining < POLL_INTERVAL_TICKS ? remaining : POLL_INTERVAL_TICKS);
         }
