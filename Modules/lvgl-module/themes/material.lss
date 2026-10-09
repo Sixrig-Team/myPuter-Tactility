@@ -34,6 +34,9 @@
 @widget badge: lvgl_badge_class;
 @widget page_indicator: lvgl_page_indicator_class;
 @widget page_indicator_dot: lvgl_page_indicator_dot_class;
+@widget flex_list: lvgl_list_class;
+@widget flex_list_text: lvgl_list_text_class;
+@widget flex_list_button: lvgl_list_button_class;
 
 // ============================================================
 // 1. Base tokens
@@ -685,6 +688,13 @@ icon_button {
     textColor: @icon-button-color;
     radius: @button-shape;
     padAll: @button-pad-ver;
+}
+
+// A selected tile, e.g. the file that the Files app shows actions for
+icon_button_selected {
+    bgColor: @list-item-focused-color;
+    bgOpa: cover;
+    textColor: @list-item-focused-text-color;
 }
 
 icon_button_filled {
@@ -1345,6 +1355,7 @@ apply(icon_button) {
     transition_exit: default;
     state_pressed: state.pressed;
     transition_enter: state.pressed;
+    icon_button_selected: state.checked;
     focus_ring_inset: state.focusKey;
     edit_ring_inset: state.edited;
     disabled: state.disabled;
@@ -1599,6 +1610,25 @@ apply(list_text) {
 }
 
 apply(list_button) {
+    list_item: default;
+    transition_exit: default;
+    state_pressed: state.pressed;
+    transition_enter: state.pressed;
+    list_item_focused: state.focusKey;
+    disabled: state.disabled;
+}
+
+apply(flex_list) {
+    list: default;
+    scrollbar: part.scrollbar;
+    scrollbar_scrolled: part.scrollbar, state.scrolled;
+}
+
+apply(flex_list_text) {
+    list_subheader: default;
+}
+
+apply(flex_list_button) {
     list_item: default;
     transition_exit: default;
     state_pressed: state.pressed;
