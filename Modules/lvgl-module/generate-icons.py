@@ -177,6 +177,11 @@ shared_symbol_code_point_names = [
     "usb", # Power (settings) app
     "wifi", # WiFi (settings) app
     "bluetooth", # Bluetooth (settings) app
+    # System menu toggles
+    "wifi_off",
+    "bluetooth_disabled",
+    "location_on",
+    "location_off",
     "terminal",
     "logo_dev",
     "camera",
@@ -194,6 +199,10 @@ shared_symbol_code_point_names = [
     "play_arrow",
     "eject",
     "create_new_folder",
+    # Notes app
+    "save",
+    "save_as",
+    "folder_open",
 ]
 
 # Get more from https://fonts.google.com/icons?icon.set=Material+Symbols&icon.style=Rounded

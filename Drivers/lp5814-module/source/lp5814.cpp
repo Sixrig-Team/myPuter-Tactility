@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <drivers/lp5814.h>
-#include <lp5814_module.h>
 
 #include <tactility/check.h>
 #include <tactility/delay.h>
@@ -93,22 +92,14 @@ static error_t lp5814_get_brightness(Device* device, uint8_t* out_brightness) {
     return ERROR_NONE;
 }
 
-static uint8_t lp5814_get_min_brightness(Device*) {
-    return 0;
-}
-
-static uint8_t lp5814_get_max_brightness(Device*) {
-    return 255;
-}
-
 // endregion
 
 static constexpr BacklightApi LP5814_BACKLIGHT_API = {
     .set_brightness = lp5814_set_brightness,
     .set_brightness_default = lp5814_set_brightness_default,
     .get_brightness = lp5814_get_brightness,
-    .get_min_brightness = lp5814_get_min_brightness,
-    .get_max_brightness = lp5814_get_max_brightness,
+    .get_min_brightness = nullptr,
+    .get_max_brightness = nullptr,
 };
 
 // region Driver lifecycle
@@ -158,8 +149,7 @@ Driver lp5814_driver = {
     .probe = nullptr,
     .api = &LP5814_BACKLIGHT_API,
     .device_type = &BACKLIGHT_TYPE,
-    .owner = &lp5814_module,
-    .internal = nullptr
+    .internal = nullptr,
 };
 
 }

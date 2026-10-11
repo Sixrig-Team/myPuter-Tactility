@@ -5,6 +5,7 @@
 #include <app/manager.h>
 #include <app/manifest.h>
 #include <app/scheduler.h>
+#include <app/start.h>
 
 #include <lvgl_window_manager/window_manager.h>
 
@@ -77,10 +78,6 @@ void setPropertyLabelText(lv_obj_t* label, PowerSupplyProperty property, const P
 }
 
 void updateUi(Context* ctx) {
-    if (ctx->entries.empty()) {
-        return;
-    }
-
     lvgl_lock();
 
     for (auto& entry : ctx->entries) {
@@ -135,6 +132,19 @@ void onQuickChargeChanged(lv_event_t* event) {
             power_supply_set_quick_charge_enabled(device, is_on);
             updateUi(ctx);
         }
+    }
+}
+
+bool isPowerOffAppRegistered() {
+    ::AppManifest manifest;
+    return app_manager_find_manifest("tactility.poweroff", &manifest) == ERROR_NONE;
+}
+
+void onPowerOffPressed(lv_event_t* /*event*/) {
+    AppStartContext context;
+    uint32_t instance_id = 0;
+    if (app_start_context_from_id("tactility.poweroff", &context) == ERROR_NONE) {
+        app_start_with_context(&context, &instance_id);
     }
 }
 
@@ -221,6 +231,26 @@ void createWidgets(lv_obj_t* parent, void* userData) {
             entry.quickChargeSwitch = qc_switch;
         }
 
+        if (power_supply_supports_power_off(device) && isPowerOffAppRegistered()) {
+            lv_obj_t* power_off_container = lv_obj_create(card);
+            lv_obj_set_width(power_off_container, LV_PCT(100));
+            lv_obj_set_height(power_off_container, LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(power_off_container, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(power_off_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_scrollable(power_off_container, false);
+            lv_obj_set_style_pad_all(power_off_container, 0, 0);
+            lv_obj_set_style_pad_gap(power_off_container, 0, 0);
+            lvgl::obj_set_style_bg_invisible(power_off_container);
+
+            lv_obj_t* label = lv_label_create(power_off_container);
+            lv_label_set_text(label, "Device power");
+            lv_obj_set_flex_grow(label, 1);
+
+            lv_obj_t* power_off_button = lv_button_create(power_off_container);
+            lv_label_set_text(lv_label_create(power_off_button), "Power off");
+            lv_obj_add_event_cb(power_off_button, onPowerOffPressed, LV_EVENT_SHORT_CLICKED, nullptr);
+        }
+
         PowerSupplyPropertyValue value;
         for (auto property : DISPLAYED_PROPERTIES) {
             if (power_supply_get_property(device, property, &value) == ERROR_NONE) {
@@ -232,6 +262,11 @@ void createWidgets(lv_obj_t* parent, void* userData) {
 
         ctx->entries.push_back(entry);
     }
+}
+
+void destroyWidgets(void* userData) {
+    auto* ctx = static_cast<Context*>(userData);
+    ctx->entries.clear();
 }
 
 int32_t appMain(int argc, char* argv[]) {
@@ -252,7 +287,7 @@ int32_t appMain(int argc, char* argv[]) {
     AppEventSubscription sub {};
     check(app_event_subscribe(&sub, &event_group) == ERROR_NONE);
 
-    WindowId window = window_manager_create(appInstanceId, createWidgets, &ctx);
+    WindowId window = window_manager_create_ext(appInstanceId, createWidgets, destroyWidgets, &ctx);
     ctx.timer->start();
 
     bool shouldClose = false;

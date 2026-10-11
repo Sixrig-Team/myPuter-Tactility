@@ -21,6 +21,7 @@
 #include <Tactility/TactilityPrivate.h>
 #include <Tactility/app/boot/BootScreen.h>
 #include <Tactility/hal/usb/Usb.h>
+#include <Tactility/hal/usb/UsbHost.h>
 #include <Tactility/lvgl/Fonts.h>
 #include <Tactility/lvgl/Lvgl.h>
 #include <Tactility/lvgl/Theme.h>
@@ -41,6 +42,7 @@
 namespace tt::app::boot {
 
 constexpr auto* TAG = "Boot";
+constexpr auto* DEFAULT_LAUNCHER_ID = "tactility.launcher";
 
 namespace {
 
@@ -153,20 +155,20 @@ std::string getLauncherAppId() {
     settings::BootSettings boot_properties;
     // When boot.properties hasn't been overridden, return default
     if (!settings::loadBootSettings(boot_properties)) {
-        return CONFIG_TT_LAUNCHER_APP_ID;
+        return DEFAULT_LAUNCHER_ID;
     }
 
     // When boot properties didn't specify an override, return default
     if (boot_properties.launcherAppId.empty()) {
         LOG_E(TAG, "Failed to load launcher configuration, or launcher not configured");
-        return CONFIG_TT_LAUNCHER_APP_ID;
+        return DEFAULT_LAUNCHER_ID;
     }
 
     // If the app in the boot.properties does not exist, return default
     AppManifest manifest;
     if (app_manager_find_manifest(boot_properties.launcherAppId.c_str(), &manifest) != ERROR_NONE) {
         LOG_E(TAG, "Launcher app %s not found", boot_properties.launcherAppId.c_str());
-        return CONFIG_TT_LAUNCHER_APP_ID;
+        return DEFAULT_LAUNCHER_ID;
     }
 
     // The boot.properties launcher app id is valid
@@ -229,6 +231,9 @@ bool bootInit(TickType_t startTime) {
 
     LOG_I(TAG, "Prepare file systems");
     prepareFileSystems();
+
+    LOG_I(TAG, "Init USB host");
+    hal::usbhost::systemStart();
 
     bool sd_card_missing = false;
 #ifdef CONFIG_TT_USER_DATA_LOCATION_SD

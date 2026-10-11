@@ -101,6 +101,12 @@ def get_user_data_location(device_properties: dict):
         exit_with_error(f"storage.userDataLocation must be 'SD' or 'Internal', but was: '{user_data_location}'")
     return user_data_location
 
+def get_system_bars_capability(device_properties: dict, key: str):
+    capability = get_property_or_default(device_properties, key, "any").lower()
+    if capability not in ("any", "split", "side"):
+        exit_with_error(f"{key} must be 'any', 'split' or 'side', but was: '{capability}'")
+    return capability
+
 def write_partition_table(output_file, device_properties: dict, is_dev: bool):
     flash_size = get_property_or_exit(device_properties, "hardware.flashSize")
     if not flash_size.endswith("MB"):
@@ -140,9 +146,6 @@ def write_tactility_variables(output_file, device_properties: dict, device_id: s
     output_file.write(f"CONFIG_TT_DEVICE_ID=\"{device_id}\"\n")
     if device_id == "lilygo-tdeck":
         output_file.write("CONFIG_TT_TDECK_WORKAROUND=y\n")
-    # Launcher app id
-    launcher_app_id = get_property_or_exit(device_properties, "apps.launcherAppId").replace("\"", "\\\"")
-    output_file.write(f"CONFIG_TT_LAUNCHER_APP_ID=\"{launcher_app_id}\"\n")
     # Auto start app id
     auto_start_app_id = get_property_or_none(device_properties, "apps.autoStartAppId")
     if auto_start_app_id is not None:
@@ -153,6 +156,11 @@ def write_tactility_variables(output_file, device_properties: dict, device_id: s
         output_file.write("CONFIG_TT_USER_DATA_LOCATION_SD=y\n")
     else:
         output_file.write("CONFIG_TT_USER_DATA_LOCATION_INTERNAL=y\n")
+    # System bars layouts per orientation
+    portrait = get_system_bars_capability(device_properties, "ui.systemBarsPortrait")
+    landscape = get_system_bars_capability(device_properties, "ui.systemBarsLandscape")
+    output_file.write(f"CONFIG_TT_SYSTEM_BARS_PORTRAIT_{portrait.upper()}=y\n")
+    output_file.write(f"CONFIG_TT_SYSTEM_BARS_LANDSCAPE_{landscape.upper()}=y\n")
 
 def write_core_variables(output_file, device_properties: dict):
     idf_target = get_property_or_exit(device_properties, "hardware.target").lower()
@@ -288,9 +296,6 @@ def write_lvgl_variables(output_file, device_properties: dict):
     color_depth = get_property_or_exit(device_properties, "lvgl.colorDepth")
     output_file.write(f"CONFIG_LV_COLOR_DEPTH={color_depth}\n")
     output_file.write(f"CONFIG_LV_COLOR_DEPTH_{color_depth}=y\n")
-    has_statusbar_colors_inverted = get_boolean_property_or_false(device_properties, "lvgl.statusbarColorsInverted")
-    if has_statusbar_colors_inverted:
-        output_file.write("CONFIG_TT_LVGL_STATUSBAR_COLORS_INVERTED=y\n")
     # Tactility uses its own themes (Modules/lvgl-module), and lvgl.theme only selects the default light or dark mode
     theme = get_property_or_default(device_properties, "lvgl.theme", "DefaultDark")
     if theme not in ("DefaultDark", "DefaultLight", "Mono"):

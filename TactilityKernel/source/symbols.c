@@ -34,11 +34,13 @@
 #include <tactility/drivers/root.h>
 #include <tactility/drivers/rtc.h>
 #include <tactility/drivers/sdcard.h>
+#include <tactility/drivers/sleep_controller.h>
 #include <tactility/drivers/spi_controller.h>
 #include <tactility/drivers/trackball.h>
 #include <tactility/drivers/uart_controller.h>
 #include <tactility/drivers/usb_device_controller.h>
 #include <tactility/drivers/usb_hid_device.h>
+#include <tactility/drivers/usb_host.h>
 #include <tactility/drivers/usb_host_hid.h>
 #include <tactility/drivers/usb_host_midi.h>
 #include <tactility/drivers/usb_host_msc.h>
@@ -106,6 +108,7 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(driver_remove),
     DEFINE_MODULE_SYMBOL(driver_construct_add),
     DEFINE_MODULE_SYMBOL(driver_remove_destruct),
+    DEFINE_MODULE_SYMBOL(driver_get_owner),
     DEFINE_MODULE_SYMBOL(driver_bind),
     DEFINE_MODULE_SYMBOL(driver_unbind),
     DEFINE_MODULE_SYMBOL(driver_is_compatible),
@@ -324,6 +327,9 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(RTC_TYPE),
     // drivers/sdcard
     DEFINE_MODULE_SYMBOL(SDCARD_TYPE),
+    // drivers/sleep_controller
+    DEFINE_MODULE_SYMBOL(sleep_controller_deep_sleep),
+    DEFINE_MODULE_SYMBOL(SLEEP_CONTROLLER_TYPE),
     // drivers/spi_controller
     DEFINE_MODULE_SYMBOL(spi_controller_lock),
     DEFINE_MODULE_SYMBOL(spi_controller_try_lock),
@@ -449,14 +455,20 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(lora_tx_event_unsubscribe),
     DEFINE_MODULE_SYMBOL(lora_tx_event_poll),
     DEFINE_MODULE_SYMBOL(LORA_TYPE),
+    // drivers/usb_host
+    DEFINE_MODULE_SYMBOL(usb_host_is_class_supported),
+    DEFINE_MODULE_SYMBOL(usb_host_is_class_enabled),
+    DEFINE_MODULE_SYMBOL(usb_host_set_class_enabled),
+    DEFINE_MODULE_SYMBOL(USB_HOST_TYPE),
     // drivers/usb_host_hid
-    DEFINE_MODULE_SYMBOL(usb_host_hid_is_connected),
     DEFINE_MODULE_SYMBOL(usb_host_hid_subscribe),
     DEFINE_MODULE_SYMBOL(usb_host_hid_unsubscribe),
     DEFINE_MODULE_SYMBOL(USB_HOST_HID_TYPE),
     // drivers/usb_host_midi
-    DEFINE_MODULE_SYMBOL(usb_midi_set_callback),
-    DEFINE_MODULE_SYMBOL(usb_midi_is_connected),
+    DEFINE_MODULE_SYMBOL(usb_midi_event_subscribe),
+    DEFINE_MODULE_SYMBOL(usb_midi_event_unsubscribe),
+    DEFINE_MODULE_SYMBOL(usb_midi_event_poll),
+    DEFINE_MODULE_SYMBOL(usb_midi_event_emit),
     DEFINE_MODULE_SYMBOL(USB_HOST_MIDI_TYPE),
     // drivers/usb_host_msc
     DEFINE_MODULE_SYMBOL(usb_msc_eject),

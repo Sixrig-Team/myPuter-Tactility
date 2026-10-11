@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <drivers/st7789_i8080.h>
-#include <st7789_i8080_module.h>
 
 #include <tactility/check.h>
 #include <tactility/device.h>
@@ -42,8 +41,8 @@ struct LcdInitCmd {
     uint8_t len;
 };
 
+// No MADCTL (0x36): esp_lcd_panel_init() already sets it from rgb_ele_order, and esp_lcd's own swap_xy/mirror rewrite it from that value
 constexpr LcdInitCmd ST7789_INIT_CMDS[] = {
-    {0x36, {0x08}, 1},
     {0x3A, {0x05}, 1},
     {0x20, {0}, 0},
     {0xB2, {0x0B, 0x0B, 0x00, 0x33, 0x33}, 5},
@@ -373,6 +372,5 @@ Driver st7789_i8080_driver = {
     .stop_device = stop,
     .api = &st7789_i8080_display_api,
     .device_type = &DISPLAY_TYPE,
-    .owner = &st7789_i8080_module,
     .internal = nullptr
 };

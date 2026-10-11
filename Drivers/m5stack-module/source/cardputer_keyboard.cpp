@@ -3,8 +3,6 @@
 // https://github.com/m5stack/M5Cardputer-UserDemo/tree/main/main/hal/keyboard (MIT licensed).
 #include <drivers/cardputer_keyboard.h>
 
-#include <m5stack_module.h>
-
 #include <tactility/check.h>
 #include <tactility/device.h>
 #include <tactility/driver.h>
@@ -256,6 +254,7 @@ static uint32_t scan_key(CardputerKeyboardInternal* internal) {
     if (has_regular) {
         switch (resolved_char) {
             case '`': return CODEPOINT_ESCAPE;
+            case '\n': return CODEPOINT_ENTER;
             case ',': return CODEPOINT_ARROW_LEFT;
             case '/': return CODEPOINT_ARROW_RIGHT;
             case ';': return CODEPOINT_ARROW_UP;
@@ -307,6 +306,5 @@ Driver cardputer_keyboard_driver = {
     .stop_device = stop,
     .api = &cardputer_keyboard_api,
     .device_type = &KEYBOARD_TYPE,
-    .owner = &m5stack_module,
     .internal = nullptr
 };
