@@ -84,11 +84,9 @@ struct Context {
     lv_obj_t* timeoutValueLabel = nullptr;
     lv_obj_t* screensaverValueLabel = nullptr;
     // Shown when auto-rotate is off or unavailable: the orientation label and chips
-    lv_obj_t* orientationGroup = nullptr;
+    lv_obj_t* orientationCard = nullptr;
     lv_obj_t* orientationChips = nullptr;
     lv_obj_t* autoRotateSwitch = nullptr;
-    // Shown when auto-rotate is on: the sensor mounting label and chips
-    lv_obj_t* mountRotationGroup = nullptr;
 };
 
 
@@ -153,13 +151,10 @@ void setCheckedChip(lv_obj_t* chips, settings::display::Orientation orientation)
     });
 }
 
-/** Shows the manual orientation or the sensor mounting, depending on whether auto-rotate is on */
+/** Shows or hides the manual orientation card, depending on whether auto-rotate is on */
 void updateOrientationVisibility(Context* ctx) {
     const bool auto_rotate = ctx->autoRotateSwitch != nullptr && ctx->displaySettings.autoRotateEnabled;
-    lv_obj_set_hidden(ctx->orientationGroup, auto_rotate);
-    if (ctx->mountRotationGroup != nullptr) {
-        lv_obj_set_hidden(ctx->mountRotationGroup, !auto_rotate);
-    }
+    lv_obj_set_hidden(ctx->orientationCard, auto_rotate);
 }
 
 void onOrientationChipPressed(lv_event_t* event) {
@@ -183,15 +178,6 @@ void onAutoRotateSwitch(lv_event_t* event) {
     ctx->displaySettings.autoRotateEnabled = enabled;
     ctx->displaySettingsUpdated = true;
     updateOrientationVisibility(ctx);
-}
-
-void onMountRotationChipPressed(lv_event_t* event) {
-    auto* ctx = static_cast<Context*>(lv_event_get_user_data(event));
-    auto* chip = lv_event_get_target_obj(event);
-    const auto orientation = static_cast<settings::display::Orientation>(lv_obj_get_index(chip));
-    ctx->displaySettings.autoRotateMountRotation = orientation;
-    ctx->displaySettingsUpdated = true;
-    setCheckedChip(lv_obj_get_parent(chip), orientation);
 }
 
 /** Creates a transparent column in a card with a title, which centers the title and the content below it */
@@ -339,7 +325,9 @@ lv_obj_t* createValueRow(lv_obj_t* card, const char* title, lv_event_cb_t onChan
     auto* value_label = lv_label_create(row);
 
     auto* button = lv_button_create(row);
-    lv_label_set_text(lv_label_create(button), "Change");
+    auto* icon = lv_label_create(button);
+    lv_obj_set_style_text_font(icon, lvgl_get_shared_icon_default_font(), LV_STATE_DEFAULT);
+    lv_label_set_text(icon, LVGL_ICON_SHARED_LIST_ALT);
     lv_obj_add_event_cb(button, onChange, LV_EVENT_SHORT_CLICKED, ctx);
     return value_label;
 }
@@ -407,19 +395,13 @@ void createWidgets(lv_obj_t* parent, void* userData) {
         lv_obj_add_event_cb(ctx->autoRotateSwitch, onAutoRotateSwitch, LV_EVENT_VALUE_CHANGED, ctx);
     }
 
-    // The card shows the manual orientation, or the sensor mounting when auto-rotate is on
-    auto* orientation_card = lvgl_card_create(main_wrapper);
-    lv_obj_set_size(orientation_card, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(orientation_card, LV_FLEX_FLOW_COLUMN);
+    // The card shows the manual orientation; auto-rotate hides it while it drives the rotation
+    ctx->orientationCard = lvgl_card_create(main_wrapper);
+    lv_obj_set_size(ctx->orientationCard, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(ctx->orientationCard, LV_FLEX_FLOW_COLUMN);
 
-    ctx->orientationGroup = createCardGroup(orientation_card, "Orientation");
-    ctx->orientationChips = createOrientationChips(ctx->orientationGroup, ctx->displaySettings.orientation, onOrientationChipPressed, ctx);
-
-    // Auto-rotate needs to know how the sensor is mounted relative to the display
-    if (has_imu) {
-        ctx->mountRotationGroup = createCardGroup(orientation_card, "Sensor mounting");
-        createOrientationChips(ctx->mountRotationGroup, ctx->displaySettings.autoRotateMountRotation, onMountRotationChipPressed, ctx);
-    }
+    auto* orientation_group = createCardGroup(ctx->orientationCard, "Orientation");
+    ctx->orientationChips = createOrientationChips(orientation_group, ctx->displaySettings.orientation, onOrientationChipPressed, ctx);
 
     updateOrientationVisibility(ctx);
 
@@ -465,10 +447,9 @@ void destroyWidgets(void* userData) {
     ctx->timeoutCard = nullptr;
     ctx->timeoutValueLabel = nullptr;
     ctx->screensaverValueLabel = nullptr;
-    ctx->orientationGroup = nullptr;
+    ctx->orientationCard = nullptr;
     ctx->orientationChips = nullptr;
     ctx->autoRotateSwitch = nullptr;
-    ctx->mountRotationGroup = nullptr;
 }
 
 // Mirrors the old onHide() behaviour: persist the settings (regardless of whether the app is

@@ -17,12 +17,10 @@ class View final {
     void* context = nullptr;
     lv_obj_t* root = nullptr;
     lv_obj_t* enable_switch = nullptr;
-    lv_obj_t* enable_on_boot_switch = nullptr;
     lv_obj_t* scanning_spinner = nullptr;
     lv_obj_t* peers_list = nullptr;
 
     void updateBtToggle();
-    void updateEnableOnBootToggle();
     void updateScanning();
     void updatePeerList();
 
@@ -35,6 +33,8 @@ public:
     View(Bindings* bindings, State* state) : bindings(bindings), state(state) {}
 
     void init(void* context, lv_obj_t* parent);
+    /** Forgets the widgets after their window was buried and deleted. Call with the LVGL lock held. */
+    void destroyWidgets();
     void update();
 };
 

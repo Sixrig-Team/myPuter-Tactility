@@ -42,15 +42,13 @@ namespace app {
     namespace apphub { extern const ::AppManifest manifest; }
     namespace appearancesettings { extern const ::AppManifest manifest; }
     namespace apphubdetails { extern const ::AppManifest manifest; }
-    namespace apppackagedetails { extern const ::AppManifest manifest; }
-    namespace apppackagelist { extern const ::AppManifest manifest; }
     namespace audiosettings { extern const ::AppManifest manifest; }
     namespace boot { extern const ::AppManifest manifest; }
     namespace development { extern const ::AppManifest manifest; }
+    namespace developmentprompt { extern const ::AppManifest manifest; }
     namespace display { extern const ::AppManifest manifest; }
     namespace files { extern const ::AppManifest manifest; }
     namespace fileselection { extern const ::AppManifest manifest; }
-    namespace gpssettings { extern const ::AppManifest manifest; }
     namespace grovesettings { extern const ::AppManifest manifest; }
     namespace i2cscanner { extern const ::AppManifest manifest; }
     namespace imageviewer { extern const ::AppManifest manifest; }
@@ -58,19 +56,24 @@ namespace app {
     namespace launcher { extern const ::AppManifest manifest; }
     namespace ledstripsettings { extern const ::AppManifest manifest; }
     namespace localesettings { extern const ::AppManifest manifest; }
+    namespace locationsettings { extern const ::AppManifest manifest; }
     namespace notes { extern const ::AppManifest manifest; }
     namespace power { extern const ::AppManifest manifest; }
     namespace poweroff { extern const ::AppManifest manifest; }
+    namespace qrcode { extern const ::AppManifest manifest; }
     namespace selectiondialog { extern const ::AppManifest manifest; }
     namespace setup { extern const ::AppManifest manifest; }
     namespace shell { extern const ::AppManifest manifest; extern const ::AppManifest sh_manifest; }
     namespace systeminfo { extern const ::AppManifest manifest; }
     namespace terminal { extern const ::AppManifest manifest; }
     namespace timedatesettings { extern const ::AppManifest manifest; }
-#if TT_FEATURE_MESH
-    namespace meshinspect { extern const ::AppManifest manifest; }
+    namespace meshchat {
+        extern const ::AppManifest contactsManifest;
+        extern const ::AppManifest channelsManifest;
+        extern const ::AppManifest conversationManifest;
+        extern const ::AppManifest addContactManifest;
+    }
     namespace meshsettings { extern const ::AppManifest manifest; }
-#endif
 #ifdef CONFIG_TT_TOUCH_CALIBRATION_SUPPORTED
     namespace touchcalibration { extern const ::AppManifest manifest; }
 #endif
@@ -109,10 +112,8 @@ static void registerInternalApps() {
     LOG_I(TAG, "Registering internal apps");
 
     app_manager_add(&app::alertdialog::manifest);
-    app_manager_add(&app::apppackagedetails::manifest);
     app_manager_add(&app::apphub::manifest);
     app_manager_add(&app::apphubdetails::manifest);
-    app_manager_add(&app::apppackagelist::manifest);
     if (service::audio::isAvailable()) {
         app_manager_add(&app::audiosettings::manifest);
     }
@@ -130,10 +131,12 @@ static void registerInternalApps() {
     app_manager_add(&app::inputdialog::manifest);
     app_manager_add(&app::launcher::manifest);
     app_manager_add(&app::localesettings::manifest);
+    app_manager_add(&app::locationsettings::manifest);
     app_manager_add(&app::notes::manifest);
     if (device_exists_of_type(&POWER_SUPPLY_TYPE)) {
         app_manager_add(&app::poweroff::manifest);
     }
+    app_manager_add(&app::qrcode::manifest);
     app_manager_add(&app::selectiondialog::manifest);
     app_manager_add(&app::setup::manifest);
     app_manager_add(&app::shell::manifest);
@@ -150,6 +153,7 @@ static void registerInternalApps() {
     app_manager_add(&app::wifimanage::manifest);
 
     app_manager_add(&app::development::manifest);
+    app_manager_add(&app::developmentprompt::manifest);
     app_manager_add(&app::webserversettings::manifest);
 #ifdef ESP_PLATFORM
     app_manager_add(&app::apwebserver::manifest);
@@ -165,12 +169,13 @@ static void registerInternalApps() {
         app_manager_add(&app::trackballsettings::manifest);
     }
 
-#if TT_FEATURE_MESH
     if (settings::radio::hasRadio()) {
-        app_manager_add(&app::meshinspect::manifest);
+        app_manager_add(&app::meshchat::contactsManifest);
+        app_manager_add(&app::meshchat::channelsManifest);
+        app_manager_add(&app::meshchat::conversationManifest);
+        app_manager_add(&app::meshchat::addContactManifest);
         app_manager_add(&app::meshsettings::manifest);
     }
-#endif
 
 #if defined(CONFIG_TINYUSB_MSC_ENABLED) && CONFIG_TINYUSB_MSC_ENABLED
     app_manager_add(&app::usbsettings::manifest);
@@ -197,7 +202,6 @@ static void registerInternalApps() {
 
     if (enable_gps) {
         app_manager_add(&app::addgps::manifest);
-        app_manager_add(&app::gpssettings::manifest);
     }
 
     if (device_exists_of_type(&POWER_SUPPLY_TYPE)) {

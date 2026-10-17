@@ -22,7 +22,11 @@
 #include <lvgl/widgets/icon_button.h>
 #include <lvgl/widgets/list.h>
 #include <lvgl/widgets/page_indicator.h>
+#include <lvgl/widgets/step_indicator.h>
+#include <lvgl/widgets/qr.h>
 #include <lvgl/widgets/spinner.h>
+#include <lvgl/widgets/statusbar.h>
+#include <lvgl/widgets/text_button.h>
 #include <lvgl/widgets/toolbar.h>
 
 #include <tactility/module.h>
@@ -36,6 +40,7 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lvgl_lock),
     DEFINE_MODULE_SYMBOL(lvgl_try_lock),
     DEFINE_MODULE_SYMBOL(lvgl_unlock),
+    DEFINE_MODULE_SYMBOL(lvgl_run_on_task),
     DEFINE_MODULE_SYMBOL(lvgl_is_running),
     DEFINE_MODULE_SYMBOL(lvgl_get_ui_density),
     // lvgl module
@@ -128,6 +133,10 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lvgl_page_indicator_create),
     DEFINE_MODULE_SYMBOL(lvgl_page_indicator_set_page_count),
     DEFINE_MODULE_SYMBOL(lvgl_page_indicator_set_page),
+    // lvgl_step_indicator
+    DEFINE_MODULE_SYMBOL(lvgl_step_indicator_create),
+    DEFINE_MODULE_SYMBOL(lvgl_step_indicator_set_step_count),
+    DEFINE_MODULE_SYMBOL(lvgl_step_indicator_set_finished_count),
     // lvgl_card
     DEFINE_MODULE_SYMBOL(lvgl_card_create),
     // lvgl_chip
@@ -135,14 +144,31 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     // lvgl_icon_button
     DEFINE_MODULE_SYMBOL(lvgl_icon_button_create),
     DEFINE_MODULE_SYMBOL(lvgl_icon_button_create_variant),
+    // lvgl_text_button
+    DEFINE_MODULE_SYMBOL(lvgl_text_button_create),
     // lvgl_list
     DEFINE_MODULE_SYMBOL(lvgl_list_create),
     DEFINE_MODULE_SYMBOL(lvgl_list_add_text),
     DEFINE_MODULE_SYMBOL(lvgl_list_add_button),
+    // lvgl_qr
+    DEFINE_MODULE_SYMBOL(lvgl_qr_create),
+    DEFINE_MODULE_SYMBOL(lvgl_qr_set_data),
+    DEFINE_MODULE_SYMBOL(lvgl_qr_set_colors),
+
     // lvgl_spinner
     DEFINE_MODULE_SYMBOL(lvgl_spinner_create),
     // lvgl_toolbar
     DEFINE_MODULE_SYMBOL(lvgl_toolbar_configure),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_set_menu_callback),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_set_time_format_24h),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_create),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_icon_add),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_icon_remove),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_icon_set_image),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_icon_set_visibility),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_get_height),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_set_side),
+    DEFINE_MODULE_SYMBOL(lvgl_statusbar_get_action_container),
     DEFINE_MODULE_SYMBOL(lvgl_toolbar_create),
     DEFINE_MODULE_SYMBOL(lvgl_toolbar_set_title),
     DEFINE_MODULE_SYMBOL(lvgl_toolbar_set_nav_action),
@@ -332,6 +358,10 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_height),
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_clip_corner),
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_shadow_color),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_parent),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_style_bg_image_tiled),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_style_image_recolor),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_style_image_opa),
     // lv_font
     DEFINE_MODULE_SYMBOL(lv_font_get_bitmap_fmt_txt),
     DEFINE_MODULE_SYMBOL(lv_font_get_default),

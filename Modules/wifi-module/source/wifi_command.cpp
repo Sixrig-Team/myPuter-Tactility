@@ -156,6 +156,10 @@ static int command_radio(Device* device, int argc, char* argv[]) {
     if (error != ERROR_NONE) {
         return report_error(on ? "radio on" : "radio off", error);
     }
+    error = wifi_settings_set_enable(on);
+    if (error != ERROR_NONE) {
+        return report_error("save radio state", error);
+    }
     printf("radio: %s\n", on ? "on" : "off");
     return 0;
 }
@@ -420,7 +424,7 @@ const AppManifest wifi_command_manifest = {
     .name = "wifi",
     .category = APP_CATEGORY_SYSTEM,
     .location = { .type = APP_LOCATION_MEMORY, .location = reinterpret_cast<void*>(wifi_command_main) },
-    .flags = APP_MANIFEST_FLAG_HIDDEN | APP_MANIFEST_FLAG_HEADLESS,
+    .flags = APP_MANIFEST_FLAG_HEADLESS,
     .stack = { .depth = 5120, .desired_memory_capability = 0 },
 };
 

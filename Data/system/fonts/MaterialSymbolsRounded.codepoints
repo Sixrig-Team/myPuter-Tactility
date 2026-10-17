@@ -42,6 +42,7 @@ forum e8af
 gamepad e30f
 hard_disk f3da
 help e8fd
+hourglass ebff
 hub e9f4
 image e3f4
 info e88e
@@ -51,6 +52,7 @@ language ea07
 lightbulb e90f
 lightstrip fff75
 link e250
+list_alt e0ee
 lists e9b9
 location_off e0c7
 location_on f1db
@@ -67,6 +69,7 @@ network_wifi_2_bar ebd6
 network_wifi_3_bar ebe1
 note_add e89c
 palette e40a
+person_remove ef66
 phone_android f2db
 play_arrow e037
 power_settings_new f8c7

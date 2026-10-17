@@ -90,6 +90,12 @@ if (DEFINED ENV{ESP_IDF_VERSION})
     # elf_loader's Xtensa relocation drops GLOB_DAT/JMP_SLOT addends. See Modules/app-esp32-module/source/elf_relocate.cpp.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_elf_arch_relocate" APPEND)
 
+    # Starting a netif twice asserts in lwip, and the co-processor can send the station start event more than once.
+    # See Platforms/platform-esp32/source/drivers/esp32_wifi.cpp.
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_netif_action_start" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_netif_action_stop" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=esp_netif_destroy" APPEND)
+
     # exit() from an app ends only that app (see app_scheduler_exit_current()) instead of aborting.
     idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=exit" APPEND)
 
@@ -169,10 +175,12 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Modules/cjson-module)
     add_subdirectory(Modules/cpp-symbols-module)
     add_subdirectory(Modules/crypt-module)
+    add_subdirectory(Modules/development-module)
     add_subdirectory(Modules/freertos-module)
     add_subdirectory(Modules/gps-module)
     add_subdirectory(Modules/graphics-module)
     add_subdirectory(Modules/http-module)
+    add_subdirectory(Modules/location-module)
     add_subdirectory(Modules/mbedtls-module)
     add_subdirectory(Modules/mesh-module)
     add_subdirectory(Modules/mesh-meshcore-module)
@@ -182,6 +190,7 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Modules/service-module)
     add_subdirectory(Modules/wifi-module)
     add_subdirectory(Modules/app-module)
+    add_subdirectory(Modules/app-hub-module)
     add_subdirectory(Modules/coreutils-module)
     add_subdirectory(Modules/app-posix-module)
     add_subdirectory(Modules/lvgl-window-manager-module)
@@ -195,12 +204,19 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     # FreeRTOS
     set(FREERTOS_CONFIG_FILE_DIRECTORY ${PROJECT_SOURCE_DIR}/Devices/simulator/Source CACHE STRING "")
     set(FREERTOS_PORT GCC_POSIX CACHE STRING "")
+    # FreeRTOS 11 no longer picks a heap implementation by default
+    set(FREERTOS_HEAP 4 CACHE STRING "")
     add_subdirectory(Libraries/FreeRTOS-Kernel)
     target_compile_definitions(freertos_kernel PUBLIC "projCOVERAGE_TEST=0")
     # xTaskCreate() and vTaskDelete() are defined by freertos_task_hooks.c instead, see its header
     set_source_files_properties(Libraries/FreeRTOS-Kernel/tasks.c
         TARGET_DIRECTORY freertos_kernel
         PROPERTIES COMPILE_DEFINITIONS "xTaskCreate=freertos_real_xTaskCreate;vTaskDelete=freertos_real_vTaskDelete"
+    )
+    # vPortCancelThread() is wrapped by freertos_task_hooks.c, see its header
+    set_source_files_properties(Libraries/FreeRTOS-Kernel/portable/ThirdParty/GCC/Posix/port.c
+        TARGET_DIRECTORY freertos_kernel_port
+        PROPERTIES COMPILE_DEFINITIONS "vPortCancelThread=freertos_real_vPortCancelThread"
     )
     target_sources(freertos_kernel PRIVATE Platforms/platform-posix/freertos/freertos_task_hooks.c)
     target_include_directories(freertos_kernel PUBLIC Platforms/platform-posix/freertos)

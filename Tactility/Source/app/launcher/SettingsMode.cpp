@@ -19,16 +19,15 @@ struct IconEntry {
 
 constexpr IconEntry ICONS[] = {
     {"tactility.appearance",        LVGL_ICON_SHARED_PALETTE},
-    {"tactility.apppackagelist",    LVGL_ICON_SHARED_DEPLOYED_CODE},
     {"tactility.audiosettings",     LVGL_ICON_SHARED_MUSIC_NOTE},
     {"tactility.btmanage",          LVGL_ICON_SHARED_BLUETOOTH},
     {"tactility.development",       LVGL_ICON_SHARED_LOGO_DEV},
     {"tactility.display",           LVGL_ICON_SHARED_DISPLAY_SETTINGS},
-    {"tactility.gpssettings",       LVGL_ICON_SHARED_NAVIGATION},
     {"tactility.grovesettings",     LVGL_ICON_SHARED_CABLE},
     {"tactility.keyboardsettings",  LVGL_ICON_SHARED_KEYBOARD_ALT},
     {"tactility.ledstripsettings",  LVGL_ICON_SHARED_LIGHTSTRIP},
     {"tactility.localesettings",    LVGL_ICON_SHARED_LANGUAGE},
+    {"tactility.locationsettings",  LVGL_ICON_SHARED_LOCATION_ON},
     {"tactility.meshsettings",      LVGL_ICON_SHARED_HUB},
     {"tactility.power",             LVGL_ICON_SHARED_POWER_SETTINGS_NEW},
     {"tactility.timedatesettings",  LVGL_ICON_SHARED_CALENDAR_MONTH},

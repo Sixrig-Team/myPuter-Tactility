@@ -41,17 +41,23 @@ target_link_libraries(TactilityTests PRIVATE
     lvgl-module
     lvgl-window-manager-module
     app-module
+    app-hub-module
     coreutils-module
     audio-decoder-module
     c-symbols-module
     cjson-module
     cpp-symbols-module
     crypt-module
+    development-module
     freertos-module
     gps-module
     graphics-module
     http-module
+    location-module
     mbedtls-module
+    mesh-module
+    mesh-meshcore-module
+    mesh-meshtastic-module
     posix-symbols-module
     pthread-module
     gps-generic-module

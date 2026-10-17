@@ -14,6 +14,7 @@
 #include <TactilityCpp/std/deque.h>
 #include <TactilityCpp/std/vector.h>
 
+#include <tactility/check.h>
 #include <tactility/concurrent/event_group.h>
 #include <tactility/concurrent/mutex.h>
 #include <tactility/concurrent/task_event_group.h>
@@ -63,49 +64,109 @@ void unlock() { mutex_unlock(&globalMutex.handle); }
 /** Serializes callOnServiceThread() callers. Taken before the global lock, never while holding it */
 GlobalMutex callMutex;
 
-const MeshBackendApi* backends[MAX_BACKENDS] = {};
-size_t backendCount = 0;
+/** The registry, settings and subscriptions. Allocated once in external memory and guarded by the global lock. */
+struct Globals {
+    const MeshBackendApi* backends[MAX_BACKENDS] = {};
+    size_t backendCount = 0;
+    MeshSettings settings {};
+    bool settingsLoaded = false;
+    MeshEventSubscription* subscriptions = nullptr;
+};
 
-MeshSettings settings {};
-bool settingsLoaded = false;
-
-MeshEventSubscription* subscriptions = nullptr;
+Globals& globals() {
+    static Globals* instance = tt::newObject<Globals>();
+    check(instance != nullptr);
+    return *instance;
+}
 
 uint64_t getMillis() {
     return get_micros_since_boot() / 1000;
 }
 
 const MeshBackendApi* findBackend(const char* id) {
-    for (size_t i = 0; i < backendCount; i++) {
-        if (strncmp(backends[i]->id, id, MESH_BACKEND_ID_MAX_LENGTH) == 0) {
-            return backends[i];
+    for (size_t i = 0; i < globals().backendCount; i++) {
+        if (strncmp(globals().backends[i]->id, id, MESH_BACKEND_ID_MAX_LENGTH) == 0) {
+            return globals().backends[i];
         }
     }
     return nullptr;
 }
 
-/** Takes a reference on the first started radio that can send and receive LoRa. @return nullptr when there is none */
+void ensureSettingsLoaded();
+
+bool canSendAndReceive(Device* device, RadioModulation modulation) {
+    return radio_can_transmit(device, modulation) && radio_can_receive(device, modulation);
+}
+
+/** Whether the radio does LoRa. Other mesh radios do ESP-NOW. */
+bool usesLora(Device* device) {
+    return canSendAndReceive(device, RADIO_MODULATION_LORA);
+}
+
+/** A started radio that can be used for mesh networking */
+bool isMeshRadio(Device* device) {
+    return device_is_ready(device) && (usesLora(device) || canSendAndReceive(device, RADIO_MODULATION_ESPNOW));
+}
+
+/**
+ * Takes a reference on the selected radio. Without a selection, or when the selected radio isn't there,
+ * that is the first radio that isn't ESP-NOW, or the first ESP-NOW radio when there is no other.
+ * @return nullptr when there is none
+ */
 Device* findRadio() {
-    Device* found = nullptr;
-    device_for_each_of_type(&RADIO_TYPE, &found, [](Device* device, void* context) {
-        if (!device_is_ready(device) || !radio_can_transmit(device, RADIO_MODULATION_LORA) || !radio_can_receive(device, RADIO_MODULATION_LORA)) {
+    char name[MESH_NAME_MAX_LENGTH + 1];
+    lock();
+    ensureSettingsLoaded();
+    strncpy(name, globals().settings.radio, sizeof(name));
+    name[MESH_NAME_MAX_LENGTH] = '\0';
+    unlock();
+
+    struct Search {
+        const char* name;
+        Device* selected = nullptr;
+        Device* lora = nullptr;
+        Device* other = nullptr;
+    } search { name };
+    device_for_each_of_type(&RADIO_TYPE, &search, [](Device* device, void* context) {
+        auto* search = static_cast<Search*>(context);
+        if (!isMeshRadio(device)) {
             return true;
         }
-        if (device_get(device) != ERROR_NONE) {
-            return true;
+        if (search->name[0] != '\0' && strcmp(device->name, search->name) == 0) {
+            search->selected = device;
+            return false;
         }
-        *static_cast<Device**>(context) = device;
-        return false;
+        Device*& slot = usesLora(device) ? search->lora : search->other;
+        if (slot == nullptr) {
+            slot = device;
+        }
+        return true;
     });
-    return found;
+
+    Device* radio = search.selected != nullptr ? search.selected : (search.lora != nullptr ? search.lora : search.other);
+    if (radio != nullptr && device_get(radio) != ERROR_NONE) {
+        return nullptr;
+    }
+    return radio;
+}
+
+/** Whether the presets of the backend apply to the radio that is used: they are for LoRa */
+bool presetsApply() {
+    Device* radio = findRadio();
+    if (radio == nullptr) {
+        return false;
+    }
+    const bool applies = usesLora(radio);
+    device_put(radio);
+    return applies;
 }
 
 /** Requires the global lock and loaded settings */
 const MeshBackendApi* getSelectedBackend() {
-    if (settings.backend[0] != '\0') {
-        return findBackend(settings.backend);
+    if (globals().settings.backend[0] != '\0') {
+        return findBackend(globals().settings.backend);
     }
-    return (backendCount > 0) ? backends[0] : nullptr;
+    return (globals().backendCount > 0) ? globals().backends[0] : nullptr;
 }
 
 size_t getPresetCount(const MeshBackendApi* api) {
@@ -130,15 +191,15 @@ size_t findPreset(const MeshBackendApi* api, const char* name) {
 }
 
 void ensureSettingsLoaded() {
-    if (!settingsLoaded) {
-        mesh_settings_load(&settings);
-        settingsLoaded = true;
+    if (!globals().settingsLoaded) {
+        mesh_settings_load(&globals().settings);
+        globals().settingsLoaded = true;
     }
 }
 
 /** Requires the global lock */
 void queueEvent(const MeshEvent& event) {
-    for (auto* sub = subscriptions; sub != nullptr; sub = sub->internal.next) {
+    for (auto* sub = globals().subscriptions; sub != nullptr; sub = sub->internal.next) {
         if (sub->internal.count >= MESH_EVENT_QUEUE_CAPACITY) {
             continue;
         }
@@ -202,6 +263,8 @@ struct MeshHost {
     MeshState state = MESH_STATE_OFF;
     MeshStore store;
     tt::std::vector<MeshNode> nodes;
+    /** The saved contacts of every backend */
+    tt::std::vector<MeshContact> contacts;
     char activeBackend[MESH_BACKEND_ID_MAX_LENGTH + 1] = {};
     tt::std::deque<std::function<void()>> calls;
 
@@ -226,6 +289,7 @@ struct MeshHost {
     RadioTxId txId = 0;
     Frame txFrame;
     tt::std::deque<AirtimeRecord> airtime;
+    RadioRxEvent rxEvent {};
     bool dutyCycleLogged = false;
     uint64_t lastTickMs = 0;
 
@@ -251,6 +315,120 @@ void setStateLocked(MeshHost* host, MeshState state) {
     setState(host, state);
     unlock();
 }
+
+// region Contacts
+
+constexpr size_t MAX_CONTACTS = 64;
+constexpr auto* CONTACTS_FILE_NAME = "contacts.bin";
+
+bool isSameAddress(const MeshAddress& a, const MeshAddress& b) {
+    return a.length == b.length && memcmp(a.bytes, b.bytes, a.length) == 0;
+}
+
+/** Requires the global lock */
+MeshContact* findContact(MeshHost* host, const MeshAddress& address) {
+    for (auto& contact : host->contacts) {
+        if (strncmp(contact.backend, host->activeBackend, MESH_BACKEND_ID_MAX_LENGTH) == 0 && isSameAddress(contact.address, address)) {
+            return &contact;
+        }
+    }
+    return nullptr;
+}
+
+void loadContacts(MeshHost* host) {
+    char path[FILE_MAX_PATH_STRING_LENGTH];
+    if (service_paths_get_user_data_path(MESH_SERVICE_ID, CONTACTS_FILE_NAME, path, sizeof(path)) != ERROR_NONE) {
+        return;
+    }
+    FILE* file = fopen(path, "rb");
+    if (file == nullptr) {
+        return;
+    }
+    MeshContact contact;
+    while (host->contacts.size() < MAX_CONTACTS && fread(&contact, sizeof(contact), 1, file) == 1) {
+        contact.backend[MESH_BACKEND_ID_MAX_LENGTH] = '\0';
+        contact.name[MESH_NAME_MAX_LENGTH] = '\0';
+        if (contact.address.length > 0 && contact.address.length <= MESH_ADDRESS_MAX_LENGTH) {
+            host->contacts.push_back(contact);
+        }
+    }
+    fclose(file);
+}
+
+/** Requires the global lock */
+void saveContacts(MeshHost* host) {
+    char directory[FILE_MAX_PATH_STRING_LENGTH];
+    char path[FILE_MAX_PATH_STRING_LENGTH];
+    if (service_paths_get_user_data_directory(MESH_SERVICE_ID, directory, sizeof(directory)) != ERROR_NONE ||
+        service_paths_get_user_data_path(MESH_SERVICE_ID, CONTACTS_FILE_NAME, path, sizeof(path)) != ERROR_NONE) {
+        return;
+    }
+    const error_t made = directory_make(directory, true);
+    if (made != ERROR_NONE && made != ERROR_ALREADY_EXISTS) {
+        LOG_E(TAG, "Failed to create %s", directory);
+        return;
+    }
+    FILE* file = fopen(path, "wb");
+    if (file == nullptr) {
+        LOG_E(TAG, "Failed to save the contacts");
+        return;
+    }
+    if (!host->contacts.empty() && fwrite(host->contacts.data(), sizeof(MeshContact), host->contacts.size(), file) != host->contacts.size()) {
+        LOG_E(TAG, "Failed to save the contacts");
+    }
+    fclose(file);
+}
+
+/**
+ * Save a contact of the active backend. An existing contact is renamed when @a rename is set.
+ * Requires the global lock.
+ */
+error_t addContact(MeshHost* host, const MeshAddress& address, const char* name, bool rename) {
+    if (address.length == 0 || address.length > MESH_ADDRESS_MAX_LENGTH) {
+        return ERROR_INVALID_ARGUMENT;
+    }
+
+    char resolvedName[MESH_NAME_MAX_LENGTH + 1] = {};
+    if (name != nullptr) {
+        strncpy(resolvedName, name, MESH_NAME_MAX_LENGTH);
+    }
+    if (resolvedName[0] == '\0') {
+        for (const auto& node : host->nodes) {
+            if (isSameAddress(node.address, address) && strncmp(node.backend, host->activeBackend, MESH_BACKEND_ID_MAX_LENGTH) == 0) {
+                strncpy(resolvedName, node.name, MESH_NAME_MAX_LENGTH);
+                break;
+            }
+        }
+    }
+    if (resolvedName[0] == '\0') {
+        // The first bytes identify the node well enough to tell nodes apart
+        for (size_t i = 0; i < address.length && i < 4; i++) {
+            snprintf(resolvedName + i * 2, 3, "%02x", address.bytes[i]);
+        }
+    }
+
+    auto* existing = findContact(host, address);
+    if (existing != nullptr) {
+        if (!rename || name == nullptr || name[0] == '\0') {
+            return ERROR_NONE;
+        }
+        strncpy(existing->name, resolvedName, MESH_NAME_MAX_LENGTH);
+    } else {
+        if (host->contacts.size() >= MAX_CONTACTS) {
+            return ERROR_RESOURCE;
+        }
+        MeshContact contact {};
+        strncpy(contact.backend, host->activeBackend, MESH_BACKEND_ID_MAX_LENGTH);
+        contact.address = address;
+        strncpy(contact.name, resolvedName, MESH_NAME_MAX_LENGTH);
+        host->contacts.push_back(contact);
+    }
+    saveContacts(host);
+    emitEvent(MESH_EVENT_CONTACT, host->state, 0, MESH_DELIVERY_RECEIVED);
+    return ERROR_NONE;
+}
+
+// endregion
 
 /** Requires the global lock */
 void setDelivery(MeshHost* host, uint32_t seq, MeshDeliveryState delivery) {
@@ -290,6 +468,33 @@ error_t callOnServiceThread(const std::function<void(MeshHost*)>& work) {
 }
 
 // region Radio and backend lifecycle (service thread)
+
+/** Subscribes to the events of @a radio, which is a referenced device. */
+void attachRadio(MeshHost* host, Device* radio) {
+    host->radio = radio;
+    host->rxSubscribed = radio_rx_event_subscribe(&host->rxSub, &host->group, host->radio) == ERROR_NONE;
+    host->txSubscribed = radio_tx_event_subscribe(&host->txSub, &host->group, host->radio) == ERROR_NONE;
+}
+
+/** Unsubscribes from the radio, releases it and drops the reference */
+void detachRadio(MeshHost* host) {
+    if (host->rxSubscribed) {
+        radio_rx_event_unsubscribe(&host->rxSub);
+        host->rxSubscribed = false;
+    }
+    if (host->txSubscribed) {
+        radio_tx_event_unsubscribe(&host->txSub);
+        host->txSubscribed = false;
+    }
+    if (host->radio != nullptr) {
+        if (host->radioAcquired) {
+            radio_release(host->radio);
+            host->radioAcquired = false;
+        }
+        device_put(host->radio);
+        host->radio = nullptr;
+    }
+}
 
 void radioOff(MeshHost* host) {
     if (host->radio != nullptr && host->radioAcquired) {
@@ -347,6 +552,13 @@ bool applyProfile(MeshHost* host) {
             return false;
         }
     }
+    if (profile.channel != 0) {
+        const error_t result = radio_set_parameter(host->radio, RADIO_PARAMETER_CHANNEL, profile.channel);
+        if (result != ERROR_NONE) {
+            LOG_E(TAG, "Setting the radio channel to %d failed: %d", (int)profile.channel, (int)result);
+            return false;
+        }
+    }
     // Listen-before-talk is optional, so a driver without it is fine
     radio_set_parameter(host->radio, RADIO_PARAMETER_LBT, 1);
 
@@ -377,15 +589,16 @@ void configure(MeshHost* host) {
 
     lock();
     const MeshBackendApi* api = getSelectedBackend();
-    const size_t preset = (api != nullptr) ? findPreset(api, settings.preset) : 0;
+    const size_t preset = (api != nullptr) ? findPreset(api, globals().settings.preset) : 0;
     unlock();
     if (api == nullptr) {
         setStateLocked(host, MESH_STATE_NO_BACKEND);
         return;
     }
 
+    // Only LoRa is bound to a region. The Wi-Fi stack limits ESP-NOW by country.
     host->appliedRegion = radio_get_region(host->radio);
-    if (host->appliedRegion == RADIO_REGION_UNSET) {
+    if (host->appliedRegion == RADIO_REGION_UNSET && usesLora(host->radio)) {
         setStateLocked(host, MESH_STATE_NO_REGION);
         return;
     }
@@ -398,7 +611,9 @@ void configure(MeshHost* host) {
         setStateLocked(host, MESH_STATE_ERROR);
         return;
     }
-    if (api->get_radio_profile(backend, host->appliedRegion, preset, &host->profile) != ERROR_NONE) {
+    // A radio that doesn't do LoRa does ESP-NOW
+    const RadioModulation modulation = usesLora(host->radio) ? RADIO_MODULATION_LORA : RADIO_MODULATION_ESPNOW;
+    if (api->get_radio_profile(backend, host->appliedRegion, modulation, preset, &host->profile) != ERROR_NONE) {
         LOG_E(TAG, "Backend %s doesn't support region %s with preset %u", api->id, radio_region_to_string(host->appliedRegion), (unsigned)preset);
         api->destroy(backend);
         host->api = nullptr;
@@ -481,7 +696,8 @@ void pumpTx(MeshHost* host) {
 
     const auto& frame = host->txQueue.front();
     const uint32_t airtimeMs = mesh_airtime_estimate_ms(host->profile, frame.data.size());
-    const uint32_t dutyCycle = mesh_airtime_duty_cycle_percent(host->appliedRegion, host->profile.frequency);
+    // Wi-Fi radios have no duty cycle limit
+    const uint32_t dutyCycle = (host->profile.modulation == RADIO_MODULATION_ESPNOW) ? 100 : mesh_airtime_duty_cycle_percent(host->appliedRegion, host->profile.frequency);
     const uint64_t nowMs = getMillis();
     if (dutyCycle < 100) {
         const uint64_t budgetMs = DUTY_CYCLE_WINDOW_MS * dutyCycle / 100;
@@ -553,21 +769,31 @@ void onTxEvent(MeshHost* host, const RadioTxEvent& event) {
 
 // region Service thread
 
-/** Takes the first LoRa radio and subscribes to its events. @return false when there is none */
+/** Takes the first radio and subscribes to its events. @return false when there is none */
 bool attachRadio(MeshHost* host) {
-    host->radio = findRadio();
-    if (host->radio == nullptr) {
+    Device* radio = findRadio();
+    if (radio == nullptr) {
         return false;
     }
-    host->rxSubscribed = radio_rx_event_subscribe(&host->rxSub, &host->group, host->radio) == ERROR_NONE;
-    host->txSubscribed = radio_tx_event_subscribe(&host->txSub, &host->group, host->radio) == ERROR_NONE;
+    attachRadio(host, radio);
     return true;
+}
+
+/** Moves to the radio that is selected in the settings */
+void reselectRadio(MeshHost* host) {
+    deactivateBackend(host);
+    detachRadio(host);
+    if (!attachRadio(host)) {
+        setStateLocked(host, MESH_STATE_NO_RADIO);
+        return;
+    }
+    configure(host);
 }
 
 void drainRadioEvents(MeshHost* host) {
     if (host->rxSubscribed) {
-        // Static: RadioRxEvent is large and only used on this thread
-        static RadioRxEvent rxEvent;
+        // A host member: RadioRxEvent is large and only used on this thread
+        auto& rxEvent = host->rxEvent;
         while (radio_rx_event_poll(&host->rxSub, &rxEvent) == ERROR_NONE) {
             if (host->api != nullptr) {
                 if (!host->api->on_receive(host->backend, rxEvent.data, rxEvent.length, rxEvent.rssi, rxEvent.snr)) {
@@ -603,7 +829,7 @@ void runCalls(MeshHost* host) {
 void tick(MeshHost* host) {
     // Radios can start after the service, e.g. once the hotplug poller detects an add-on
     if (host->radio == nullptr && attachRadio(host)) {
-        LOG_I(TAG, "LoRa radio found");
+        LOG_I(TAG, "Mesh radio found");
         configure(host);
     }
     if (host->radio != nullptr && host->radioAcquired && radio_get_region(host->radio) != host->appliedRegion) {
@@ -664,22 +890,7 @@ void destroyService(const ServiceManifest*, void* data) {
 }
 
 void releaseResources(MeshHost* host) {
-    if (host->rxSubscribed) {
-        radio_rx_event_unsubscribe(&host->rxSub);
-        host->rxSubscribed = false;
-    }
-    if (host->txSubscribed) {
-        radio_tx_event_unsubscribe(&host->txSub);
-        host->txSubscribed = false;
-    }
-    if (host->radio != nullptr) {
-        if (host->radioAcquired) {
-            radio_release(host->radio);
-            host->radioAcquired = false;
-        }
-        device_put(host->radio);
-        host->radio = nullptr;
-    }
+    detachRadio(host);
     task_event_group_destruct(&host->group);
     event_group_destruct(&host->callEvents);
 }
@@ -702,9 +913,15 @@ error_t onStart(ServiceInstance*, void* data) {
         releaseResources(host);
         return ERROR_RESOURCE;
     }
+    loadContacts(host);
 
     if (!attachRadio(host)) {
-        LOG_W(TAG, "No LoRa radio found yet");
+        LOG_W(TAG, "No mesh radio found yet");
+        device_for_each_of_type(&RADIO_TYPE, nullptr, [](Device* device, void*) {
+            LOG_I(TAG, "Radio %s: ready=%d lora=%d espnow=%d", device->name, (int)device_is_ready(device),
+                (int)usesLora(device), (int)canSendAndReceive(device, RADIO_MODULATION_ESPNOW));
+            return true;
+        });
     }
 
     lock();
@@ -767,7 +984,7 @@ const ServiceManifest mesh_service_manifest = {
 bool mesh_service_should_auto_start() {
     lock();
     ensureSettingsLoaded();
-    const bool enabled = settings.enabled;
+    const bool enabled = globals().settings.enabled;
     unlock();
     return enabled;
 }
@@ -781,10 +998,10 @@ error_t mesh_backend_register(const MeshBackendApi* api) {
     error_t result = ERROR_NONE;
     if (findBackend(api->id) != nullptr) {
         result = ERROR_ALREADY_EXISTS;
-    } else if (backendCount >= MAX_BACKENDS) {
+    } else if (globals().backendCount >= MAX_BACKENDS) {
         result = ERROR_RESOURCE;
     } else {
-        backends[backendCount++] = api;
+        globals().backends[globals().backendCount++] = api;
         if (service != nullptr && service->state == MESH_STATE_NO_BACKEND) {
             MeshHost* host = service;
             post(host, [host] { configure(host); });
@@ -797,10 +1014,10 @@ error_t mesh_backend_register(const MeshBackendApi* api) {
 error_t mesh_backend_unregister(const MeshBackendApi* api) {
     lock();
     error_t result = ERROR_NOT_FOUND;
-    for (size_t i = 0; i < backendCount; i++) {
-        if (backends[i] == api) {
-            backends[i] = backends[--backendCount];
-            backends[backendCount] = nullptr;
+    for (size_t i = 0; i < globals().backendCount; i++) {
+        if (globals().backends[i] == api) {
+            globals().backends[i] = globals().backends[--globals().backendCount];
+            globals().backends[globals().backendCount] = nullptr;
             result = ERROR_NONE;
             break;
         }
@@ -874,6 +1091,10 @@ uint32_t mesh_host_receive_text(
     uint32_t seq = 0;
     if (host->store.add(&message) == ERROR_NONE) {
         seq = message.seq;
+        // A sender of a direct message is saved, so the conversation can be found and answered
+        if (from != nullptr && from->length > 0) {
+            addContact(host, *from, sender_name, false);
+        }
         emitEvent(MESH_EVENT_MESSAGE, host->state, seq, MESH_DELIVERY_RECEIVED);
     }
     unlock();
@@ -947,7 +1168,7 @@ error_t mesh_host_get_data_path(MeshHost* host, const char* child_path, char* ou
 void mesh_host_get_node_name(MeshHost*, char* name, size_t name_size) {
     lock();
     ensureSettingsLoaded();
-    strncpy(name, settings.node_name, name_size - 1);
+    strncpy(name, globals().settings.node_name, name_size - 1);
     name[name_size - 1] = '\0';
     unlock();
 }
@@ -980,8 +1201,8 @@ const char* mesh_state_to_string(MeshState state) {
 error_t mesh_set_enabled(bool enabled) {
     lock();
     ensureSettingsLoaded();
-    settings.enabled = enabled;
-    const MeshSettings copy = settings;
+    globals().settings.enabled = enabled;
+    const MeshSettings copy = globals().settings;
     unlock();
 
     const error_t saved = mesh_settings_save(&copy);
@@ -992,7 +1213,7 @@ error_t mesh_set_enabled(bool enabled) {
 bool mesh_is_enabled(void) {
     lock();
     ensureSettingsLoaded();
-    const bool enabled = settings.enabled;
+    const bool enabled = globals().settings.enabled;
     unlock();
     return enabled;
 }
@@ -1010,9 +1231,17 @@ error_t mesh_set_node_name(const char* name) {
     }
     lock();
     ensureSettingsLoaded();
-    strncpy(settings.node_name, name, MESH_NAME_MAX_LENGTH);
-    settings.node_name[MESH_NAME_MAX_LENGTH] = '\0';
-    const MeshSettings copy = settings;
+    strncpy(globals().settings.node_name, name, MESH_NAME_MAX_LENGTH);
+    globals().settings.node_name[MESH_NAME_MAX_LENGTH] = '\0';
+    const MeshSettings copy = globals().settings;
+    // The backend announces the new name
+    if (service != nullptr) {
+        post(service, [host = service] {
+            if (host->api != nullptr && host->api->on_node_name_changed != nullptr) {
+                host->api->on_node_name_changed(host->backend);
+            }
+        });
+    }
     unlock();
     return mesh_settings_save(&copy);
 }
@@ -1034,9 +1263,106 @@ bool mesh_is_available(void) {
     return true;
 }
 
+size_t mesh_get_radio_count(void) {
+    size_t count = 0;
+    device_for_each_of_type(&RADIO_TYPE, &count, [](Device* device, void* context) {
+        if (isMeshRadio(device)) {
+            (*static_cast<size_t*>(context))++;
+        }
+        return true;
+    });
+    return count;
+}
+
+error_t mesh_get_radio_kind(size_t index, MeshRadioKind* kind) {
+    struct Search {
+        size_t index;
+        MeshRadioKind* kind;
+        error_t result;
+    } search = { index, kind, ERROR_NOT_FOUND };
+    device_for_each_of_type(&RADIO_TYPE, &search, [](Device* device, void* context) {
+        auto* search = static_cast<Search*>(context);
+        if (!isMeshRadio(device)) {
+            return true;
+        }
+        if (search->index-- > 0) {
+            return true;
+        }
+        *search->kind = usesLora(device) ? MESH_RADIO_LORA : MESH_RADIO_ESPNOW;
+        search->result = ERROR_NONE;
+        return false;
+    });
+    return search.result;
+}
+
+error_t mesh_get_radio_name(size_t index, char* name, size_t name_size) {
+    struct Search {
+        size_t index;
+        char* name;
+        size_t size;
+        error_t result;
+    } search = { index, name, name_size, ERROR_NOT_FOUND };
+    device_for_each_of_type(&RADIO_TYPE, &search, [](Device* device, void* context) {
+        auto* search = static_cast<Search*>(context);
+        if (!isMeshRadio(device)) {
+            return true;
+        }
+        if (search->index-- > 0) {
+            return true;
+        }
+        if (search->size > 0) {
+            strncpy(search->name, device->name, search->size - 1);
+            search->name[search->size - 1] = '\0';
+            search->result = ERROR_NONE;
+        }
+        return false;
+    });
+    return search.result;
+}
+
+error_t mesh_get_radio(char* name, size_t name_size) {
+    Device* radio = findRadio();
+    if (radio == nullptr || name_size == 0) {
+        if (radio != nullptr) {
+            device_put(radio);
+        }
+        return ERROR_NOT_FOUND;
+    }
+    strncpy(name, radio->name, name_size - 1);
+    name[name_size - 1] = '\0';
+    device_put(radio);
+    return ERROR_NONE;
+}
+
+error_t mesh_set_radio(const char* name) {
+    const char* selected = (name != nullptr) ? name : "";
+    if (selected[0] != '\0') {
+        bool found = false;
+        for (size_t i = 0, count = mesh_get_radio_count(); i < count && !found; i++) {
+            char radioName[MESH_NAME_MAX_LENGTH + 1];
+            found = mesh_get_radio_name(i, radioName, sizeof(radioName)) == ERROR_NONE && strcmp(radioName, selected) == 0;
+        }
+        if (!found) {
+            return ERROR_NOT_FOUND;
+        }
+    }
+
+    lock();
+    ensureSettingsLoaded();
+    strncpy(globals().settings.radio, selected, MESH_NAME_MAX_LENGTH);
+    globals().settings.radio[MESH_NAME_MAX_LENGTH] = '\0';
+    const MeshSettings copy = globals().settings;
+    if (service != nullptr) {
+        MeshHost* host = service;
+        post(host, [host] { reselectRadio(host); });
+    }
+    unlock();
+    return mesh_settings_save(&copy);
+}
+
 size_t mesh_get_backend_count(void) {
     lock();
-    const size_t count = backendCount;
+    const size_t count = globals().backendCount;
     unlock();
     return count;
 }
@@ -1044,8 +1370,8 @@ size_t mesh_get_backend_count(void) {
 error_t mesh_get_backend_id(size_t index, char* id, size_t id_size) {
     lock();
     error_t result = ERROR_NOT_FOUND;
-    if (index < backendCount && id_size > 0) {
-        strncpy(id, backends[index]->id, id_size - 1);
+    if (index < globals().backendCount && id_size > 0) {
+        strncpy(id, globals().backends[index]->id, id_size - 1);
         id[id_size - 1] = '\0';
         result = ERROR_NONE;
     }
@@ -1060,12 +1386,12 @@ error_t mesh_set_backend(const char* id) {
         return ERROR_NOT_FOUND;
     }
     ensureSettingsLoaded();
-    if (strncmp(settings.backend, id, MESH_BACKEND_ID_MAX_LENGTH) != 0) {
-        settings.preset[0] = '\0';
+    if (strncmp(globals().settings.backend, id, MESH_BACKEND_ID_MAX_LENGTH) != 0) {
+        globals().settings.preset[0] = '\0';
     }
-    strncpy(settings.backend, id, MESH_BACKEND_ID_MAX_LENGTH);
-    settings.backend[MESH_BACKEND_ID_MAX_LENGTH] = '\0';
-    const MeshSettings copy = settings;
+    strncpy(globals().settings.backend, id, MESH_BACKEND_ID_MAX_LENGTH);
+    globals().settings.backend[MESH_BACKEND_ID_MAX_LENGTH] = '\0';
+    const MeshSettings copy = globals().settings;
     if (service != nullptr) {
         MeshHost* host = service;
         post(host, [host] { configure(host); });
@@ -1077,7 +1403,7 @@ error_t mesh_set_backend(const char* id) {
 error_t mesh_get_backend(char* id, size_t id_size) {
     lock();
     ensureSettingsLoaded();
-    const char* selected = settings.backend;
+    const char* selected = globals().settings.backend;
     if (service != nullptr && service->activeBackend[0] != '\0') {
         selected = service->activeBackend;
     }
@@ -1092,20 +1418,22 @@ error_t mesh_get_backend(char* id, size_t id_size) {
 }
 
 size_t mesh_get_preset_count(void) {
+    const bool applies = presetsApply();
     lock();
     ensureSettingsLoaded();
     const MeshBackendApi* api = getSelectedBackend();
-    const size_t count = (api != nullptr) ? getPresetCount(api) : 0;
+    const size_t count = (api != nullptr && applies) ? getPresetCount(api) : 0;
     unlock();
     return count;
 }
 
 error_t mesh_get_preset_name(size_t index, char* name, size_t name_size) {
+    const bool applies = presetsApply();
     lock();
     ensureSettingsLoaded();
     const MeshBackendApi* api = getSelectedBackend();
     error_t result = ERROR_NOT_FOUND;
-    if (api != nullptr && index < getPresetCount(api) && name_size > 0) {
+    if (api != nullptr && applies && index < getPresetCount(api) && name_size > 0) {
         strncpy(name, api->presets[index], name_size - 1);
         name[name_size - 1] = '\0';
         result = ERROR_NONE;
@@ -1115,17 +1443,18 @@ error_t mesh_get_preset_name(size_t index, char* name, size_t name_size) {
 }
 
 error_t mesh_set_preset(const char* name) {
+    const bool applies = presetsApply();
     lock();
     ensureSettingsLoaded();
     const MeshBackendApi* api = getSelectedBackend();
     const size_t index = (api != nullptr) ? findPreset(api, name) : 0;
-    if (api == nullptr || index >= getPresetCount(api) || strcmp(api->presets[index], name) != 0) {
+    if (api == nullptr || !applies || index >= getPresetCount(api) || strcmp(api->presets[index], name) != 0) {
         unlock();
         return ERROR_NOT_FOUND;
     }
-    strncpy(settings.preset, name, MESH_NAME_MAX_LENGTH);
-    settings.preset[MESH_NAME_MAX_LENGTH] = '\0';
-    const MeshSettings copy = settings;
+    strncpy(globals().settings.preset, name, MESH_NAME_MAX_LENGTH);
+    globals().settings.preset[MESH_NAME_MAX_LENGTH] = '\0';
+    const MeshSettings copy = globals().settings;
     if (service != nullptr) {
         MeshHost* host = service;
         post(host, [host] { configure(host); });
@@ -1135,12 +1464,13 @@ error_t mesh_set_preset(const char* name) {
 }
 
 error_t mesh_get_preset(char* name, size_t name_size) {
+    const bool applies = presetsApply();
     lock();
     ensureSettingsLoaded();
     const MeshBackendApi* api = getSelectedBackend();
     error_t result = ERROR_NOT_FOUND;
-    if (api != nullptr && getPresetCount(api) > 0 && name_size > 0) {
-        strncpy(name, api->presets[findPreset(api, settings.preset)], name_size - 1);
+    if (api != nullptr && applies && getPresetCount(api) > 0 && name_size > 0) {
+        strncpy(name, api->presets[findPreset(api, globals().settings.preset)], name_size - 1);
         name[name_size - 1] = '\0';
         result = ERROR_NONE;
     }
@@ -1168,7 +1498,7 @@ error_t mesh_send_text(const MeshAddress* to, uint8_t channel, const char* text,
         message.peer = *to;
     }
     message.channel = channel;
-    strncpy(message.sender_name, settings.node_name, MESH_NAME_MAX_LENGTH);
+    strncpy(message.sender_name, globals().settings.node_name, MESH_NAME_MAX_LENGTH);
     const int64_t now = (int64_t)time(nullptr);
     message.wall_time = (now >= MIN_VALID_WALL_TIME) ? now : 0;
     message.time_source = (now >= MIN_VALID_WALL_TIME) ? MESH_TIME_SOURCE_SYSTEM : MESH_TIME_SOURCE_NONE;
@@ -1245,6 +1575,108 @@ error_t mesh_history_get(uint32_t before_seq, MeshMessage* messages, size_t max_
     return result;
 }
 
+error_t mesh_conversation_get(const MeshAddress* peer, uint8_t channel, uint32_t before_seq, MeshMessage* messages, size_t max_count, size_t* count) {
+    lock();
+    error_t result = ERROR_INVALID_STATE;
+    if (service != nullptr) {
+        *count = service->store.getConversation(service->activeBackend, peer, channel, before_seq, messages, max_count);
+        result = ERROR_NONE;
+    }
+    unlock();
+    return result;
+}
+
+error_t mesh_get_contacts(MeshContact* contacts, size_t max_count, size_t* count) {
+    lock();
+    error_t result = ERROR_INVALID_STATE;
+    if (service != nullptr) {
+        *count = 0;
+        for (const auto& contact : service->contacts) {
+            if (*count < max_count && strncmp(contact.backend, service->activeBackend, MESH_BACKEND_ID_MAX_LENGTH) == 0) {
+                contacts[(*count)++] = contact;
+            }
+        }
+        result = ERROR_NONE;
+    }
+    unlock();
+    return result;
+}
+
+error_t mesh_add_contact(const MeshAddress* address, const char* name) {
+    if (address->length == 0 || address->length > MESH_ADDRESS_MAX_LENGTH) {
+        return ERROR_INVALID_ARGUMENT;
+    }
+    bool valid = true;
+    const error_t callResult = callOnServiceThread([&](MeshHost* host) {
+        if (host->api != nullptr && host->api->is_valid_contact_address != nullptr) {
+            valid = host->api->is_valid_contact_address(host->backend, address);
+        }
+    });
+    if (callResult != ERROR_NONE) {
+        return callResult;
+    }
+    if (!valid) {
+        return ERROR_INVALID_ARGUMENT;
+    }
+
+    lock();
+    error_t result = ERROR_INVALID_STATE;
+    if (service != nullptr) {
+        result = addContact(service, *address, name, true);
+    }
+    unlock();
+    return result;
+}
+
+error_t mesh_remove_contact(const MeshAddress* address) {
+    lock();
+    error_t result = ERROR_INVALID_STATE;
+    if (service != nullptr) {
+        auto* contact = findContact(service, *address);
+        if (contact == nullptr) {
+            result = ERROR_NOT_FOUND;
+        } else {
+            service->contacts.erase(service->contacts.begin() + (contact - service->contacts.data()));
+            saveContacts(service);
+            emitEvent(MESH_EVENT_CONTACT, service->state, 0, MESH_DELIVERY_RECEIVED);
+            result = ERROR_NONE;
+        }
+    }
+    unlock();
+    return result;
+}
+
+error_t mesh_get_contact_uri(const MeshAddress* contact, char* uri, size_t uri_size) {
+    char name[MESH_NAME_MAX_LENGTH + 1] = {};
+    lock();
+    if (service == nullptr) {
+        unlock();
+        return ERROR_INVALID_STATE;
+    }
+    if (contact == nullptr) {
+        strncpy(name, globals().settings.node_name, MESH_NAME_MAX_LENGTH);
+    } else {
+        const auto* saved = findContact(service, *contact);
+        if (saved == nullptr) {
+            unlock();
+            return ERROR_NOT_FOUND;
+        }
+        strncpy(name, saved->name, MESH_NAME_MAX_LENGTH);
+    }
+    unlock();
+
+    error_t result = ERROR_INVALID_STATE;
+    const error_t callResult = callOnServiceThread([&](MeshHost* host) {
+        if (host->api == nullptr) {
+            return;
+        }
+        result = (host->api->get_contact_uri != nullptr)
+            ? host->api->get_contact_uri(host->backend, contact, name, uri, uri_size)
+            : ERROR_NOT_SUPPORTED;
+    });
+    return (callResult != ERROR_NONE) ? callResult : result;
+}
+
 error_t mesh_get_nodes(MeshNode* nodes, size_t max_count, size_t* count) {
     lock();
     error_t result = ERROR_INVALID_STATE;
@@ -1270,6 +1702,18 @@ error_t mesh_get_channels(MeshChannel* channels, size_t max_count, size_t* count
     return (callResult != ERROR_NONE) ? callResult : result;
 }
 
+/** Tells the subscribers that the channels changed, when the change succeeded */
+static void emitChannelChanged(error_t result) {
+    if (result != ERROR_NONE) {
+        return;
+    }
+    lock();
+    if (service != nullptr) {
+        emitEvent(MESH_EVENT_CHANNEL, service->state, 0, MESH_DELIVERY_RECEIVED);
+    }
+    unlock();
+}
+
 error_t mesh_set_channel(const MeshChannel* channel) {
     error_t result = ERROR_INVALID_STATE;
     const error_t callResult = callOnServiceThread([&](MeshHost* host) {
@@ -1280,7 +1724,27 @@ error_t mesh_set_channel(const MeshChannel* channel) {
             ? host->api->set_channel(host->backend, channel)
             : ERROR_NOT_SUPPORTED;
     });
-    return (callResult != ERROR_NONE) ? callResult : result;
+    const error_t finalResult = (callResult != ERROR_NONE) ? callResult : result;
+    emitChannelChanged(finalResult);
+    return finalResult;
+}
+
+error_t mesh_remove_channel(uint8_t index) {
+    if (index == 0) {
+        return ERROR_INVALID_ARGUMENT;
+    }
+    error_t result = ERROR_INVALID_STATE;
+    const error_t callResult = callOnServiceThread([&](MeshHost* host) {
+        if (host->api == nullptr) {
+            return;
+        }
+        result = (host->api->remove_channel != nullptr)
+            ? host->api->remove_channel(host->backend, index)
+            : ERROR_NOT_SUPPORTED;
+    });
+    const error_t finalResult = (callResult != ERROR_NONE) ? callResult : result;
+    emitChannelChanged(finalResult);
+    return finalResult;
 }
 
 // endregion
@@ -1295,7 +1759,7 @@ error_t mesh_event_subscribe(MeshEventSubscription* sub, TaskEventGroup* event_g
     }
 
     lock();
-    for (auto* existing = subscriptions; existing != nullptr; existing = existing->internal.next) {
+    for (auto* existing = globals().subscriptions; existing != nullptr; existing = existing->internal.next) {
         if (existing == sub) {
             unlock();
             task_event_group_release_bit(event_group, bit);
@@ -1306,8 +1770,8 @@ error_t mesh_event_subscribe(MeshEventSubscription* sub, TaskEventGroup* event_g
     sub->internal.event_group = event_group;
     sub->internal.head = 0;
     sub->internal.count = 0;
-    sub->internal.next = subscriptions;
-    subscriptions = sub;
+    sub->internal.next = globals().subscriptions;
+    globals().subscriptions = sub;
     unlock();
     return ERROR_NONE;
 }
@@ -1315,7 +1779,7 @@ error_t mesh_event_subscribe(MeshEventSubscription* sub, TaskEventGroup* event_g
 error_t mesh_event_unsubscribe(MeshEventSubscription* sub) {
     error_t result = ERROR_NOT_FOUND;
     lock();
-    for (auto** link = &subscriptions; *link != nullptr; link = &(*link)->internal.next) {
+    for (auto** link = &globals().subscriptions; *link != nullptr; link = &(*link)->internal.next) {
         if (*link == sub) {
             *link = sub->internal.next;
             result = ERROR_NONE;

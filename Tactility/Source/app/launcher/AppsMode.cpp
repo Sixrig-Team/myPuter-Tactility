@@ -31,17 +31,12 @@ constexpr IconEntry ICONS[] = {
     {"tactility.chat",              LVGL_ICON_SHARED_FORUM},
     {"tactility.files",             LVGL_ICON_SHARED_FOLDER},
     {"tactility.i2cscanner",        LVGL_ICON_SHARED_CABLE},
-    {"tactility.meshinspect",       LVGL_ICON_SHARED_LISTS},
+    {"tactility.meshchannels",      LVGL_ICON_SHARED_FORUM},
+    {"tactility.meshcontacts",      LVGL_ICON_SHARED_FORUM},
     {"tactility.notes",             LVGL_ICON_SHARED_EDIT_NOTE},
-    {"tactility.screenshot",        LVGL_ICON_SHARED_IMAGE},
     {"tactility.systeminfo",        LVGL_ICON_SHARED_DEVICES},
     {"tactility.terminal",          LVGL_ICON_SHARED_TERMINAL},
     {"tactility.webserversettings", LVGL_ICON_SHARED_CLOUD},
-};
-
-// Hidden apps that are still shown in the launcher
-constexpr const char* SHOWN_HIDDEN_APP_IDS[] = {
-    "tactility.files",
 };
 
 const char* appIcon(const ::AppManifest* manifest) {
@@ -55,10 +50,14 @@ bool isShown(const ::AppManifest& manifest) {
     if (manifest.category != APP_CATEGORY_USER && manifest.category != APP_CATEGORY_SYSTEM) {
         return false;
     }
-    if ((manifest.flags & APP_MANIFEST_FLAG_HIDDEN) == 0) {
-        return true;
+    if ((manifest.flags & APP_MANIFEST_FLAG_HEADLESS) != 0) {
+        return false;
     }
-    return std::ranges::any_of(SHOWN_HIDDEN_APP_IDS, [&](const char* id) { return strcmp(manifest.id, id) == 0; });
+    if ((manifest.flags & APP_MANIFEST_FLAG_HIDDEN) != 0) {
+        return false;
+    }
+
+    return true;
 }
 
 void collectManifest(const ::AppManifest* manifest, void* context) {

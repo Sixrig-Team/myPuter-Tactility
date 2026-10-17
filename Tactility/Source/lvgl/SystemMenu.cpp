@@ -2,12 +2,15 @@
 
 #include <Tactility/TactilityPrivate.h>
 #include <Tactility/bluetooth/Bluetooth.h>
+#include <Tactility/bluetooth/BluetoothSettings.h>
 #include <Tactility/settings/RadioSettings.h>
 
 #include <app/manager.h>
 #include <app/start.h>
 
-#include <gps/gps.h>
+#include <location/location.h>
+
+#include <wifi/wifi_settings.h>
 
 #include <lvgl/devices/indev.h>
 #include <lvgl/fonts.h>
@@ -20,9 +23,7 @@
 
 #include <lvgl_window_manager/window_manager.h>
 
-#if TT_FEATURE_MESH
 #include <mesh/mesh.h>
-#endif
 
 #include <tactility/concurrent/dispatcher.h>
 #include <tactility/device.h>
@@ -55,10 +56,6 @@ static bool hasWifi() {
     return device_exists_of_type(&WIFI_TYPE);
 }
 
-static bool hasGps() {
-    return device_exists_of_type(&GPS_TYPE);
-}
-
 static bool hasBluetooth() {
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
     return device_exists_of_type(&BLUETOOTH_TYPE);
@@ -69,14 +66,10 @@ static bool hasBluetooth() {
 
 /** Mesh can be toggled once it was configured: a backend is selected and the region is set */
 static bool hasMesh() {
-#if TT_FEATURE_MESH
     char backend[MESH_BACKEND_ID_MAX_LENGTH + 1];
     return mesh_is_available() &&
         mesh_get_backend(backend, sizeof(backend)) == ERROR_NONE &&
         settings::radio::loadRegion() != RADIO_REGION_UNSET;
-#else
-    return false;
-#endif
 }
 
 static bool isWifiEnabled() {
@@ -95,35 +88,27 @@ static void setWifiEnabled(void* context) {
     if (device_get_first_by_type(&WIFI_TYPE, &device) != ERROR_NONE) {
         return;
     }
-    error_t result = fromContext(context) ? wifi_set_radio_on(device) : wifi_set_radio_off(device);
-    if (result != ERROR_NONE) {
+    const bool enabled = fromContext(context);
+    error_t result = enabled ? wifi_set_radio_on(device) : wifi_set_radio_off(device);
+    if (result == ERROR_NONE) {
+        if (wifi_settings_set_enable(enabled) != ERROR_NONE) {
+            LOG_E(TAG, "Failed to save the Wi-Fi state");
+        }
+    } else {
         LOG_E(TAG, "Failed to set Wi-Fi radio state (%s)", error_to_string(result));
     }
     device_put(device);
 }
 
-static bool isGpsEnabled() {
-    bool enabled = false;
-    device_for_each_of_type(&GPS_TYPE, &enabled, [](Device* device, void* context) {
-        if (device_is_ready(device)) {
-            *static_cast<bool*>(context) = true;
-            return false;
-        }
-        return true;
-    });
-    return enabled;
+static bool isLocationEnabled() {
+    return location_is_enabled();
 }
 
-static void setGpsEnabled(void* context) {
-    device_for_each_of_type(&GPS_TYPE, context, [](Device* device, void* context) {
-        const bool enabled = fromContext(context);
-        if (enabled && !device_is_ready(device)) {
-            device_start(device);
-        } else if (!enabled && device_is_ready(device)) {
-            device_stop(device);
-        }
-        return true;
-    });
+static void setLocationEnabled(void* context) {
+    const error_t result = location_set_enabled(fromContext(context));
+    if (result != ERROR_NONE) {
+        LOG_E(TAG, "Failed to set location services state (%s)", error_to_string(result));
+    }
 }
 
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
@@ -144,6 +129,7 @@ static void setBluetoothEnabled(void* context) {
         return;
     }
     const bool enabled = fromContext(context);
+    bluetooth::settings::setEnable(enabled);
     if (enabled != bluetooth::isRadioOnOrPending(device)) {
         if (enabled) {
             bluetooth::start(device);
@@ -156,7 +142,6 @@ static void setBluetoothEnabled(void* context) {
 
 #endif
 
-#if TT_FEATURE_MESH
 
 static bool isMeshEnabled() {
     return mesh_is_enabled();
@@ -169,7 +154,6 @@ static void setMeshEnabled(void* context) {
     }
 }
 
-#endif
 
 // Changing the radio and device states can block, so it happens on the main task
 struct ToggleOption {
@@ -290,23 +274,19 @@ static void createWidgets(lv_obj_t* parent, void* /*userData*/) {
     if (hasWifi()) {
         createOption(grid, &wifi_option);
     }
-    static constexpr ToggleOption gps_option = { LVGL_ICON_SHARED_LOCATION_ON, LVGL_ICON_SHARED_LOCATION_OFF, isGpsEnabled, setGpsEnabled };
-    if (hasGps()) {
-        createOption(grid, &gps_option);
-    }
+    static constexpr ToggleOption location_option = { LVGL_ICON_SHARED_LOCATION_ON, LVGL_ICON_SHARED_LOCATION_OFF, isLocationEnabled, setLocationEnabled };
+    createOption(grid, &location_option);
 #if defined(CONFIG_BT_NIMBLE_ENABLED)
     static constexpr ToggleOption bluetooth_option = { LVGL_ICON_SHARED_BLUETOOTH, LVGL_ICON_SHARED_BLUETOOTH_DISABLED, isBluetoothEnabled, setBluetoothEnabled };
     if (hasBluetooth()) {
         createOption(grid, &bluetooth_option);
     }
 #endif
-#if TT_FEATURE_MESH
     // There is no "off" variant of this icon: the toggle's checked state shows whether mesh is on
     static constexpr ToggleOption mesh_option = { LVGL_ICON_SHARED_HUB, LVGL_ICON_SHARED_HUB, isMeshEnabled, setMeshEnabled };
     if (hasMesh()) {
         createOption(grid, &mesh_option);
     }
-#endif
     if (supportsPowerOff()) {
         auto* power_tile = createTile(grid, LVGL_ICON_SHARED_POWER_SETTINGS_NEW);
         lv_obj_add_event_cb(power_tile, onPowerOffClicked, LV_EVENT_SHORT_CLICKED, nullptr);
@@ -314,17 +294,16 @@ static void createWidgets(lv_obj_t* parent, void* /*userData*/) {
     // The arrow keys move between the tiles. Toggles that are focused directly would be switched by them.
     lvgl_grid_navigation_add(grid);
 
-    // Without a pointer device, tapping outside of the card or swiping up isn't possible
-    if (!lvgl_indev_exists(LV_INDEV_TYPE_POINTER)) {
+    // A keyboard or encoder can't tap outside of the card or swipe up, so it needs a button to close the menu
+    if (lvgl_indev_exists(LV_INDEV_TYPE_KEYPAD) || lvgl_indev_exists(LV_INDEV_TYPE_ENCODER)) {
         auto* close_button = createTile(card, LVGL_ICON_SHARED_CLOSE);
         lv_obj_add_event_cb(close_button, onCloseClicked, LV_EVENT_SHORT_CLICKED, nullptr);
+        lv_group_focus_obj(close_button);
+        lv_obj_add_state(close_button, LV_STATE_FOCUS_KEY);
     }
 }
 
 void systemMenuShow() {
-    if (!hasWifi() && !hasGps() && !hasBluetooth() && !hasMesh() && !supportsPowerOff()) {
-        return;
-    }
     window_manager_overlay_show(createWidgets, nullptr, nullptr);
 }
 
