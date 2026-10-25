@@ -46,7 +46,6 @@ if (DEFINED ENV{ESP_IDF_VERSION})
         "Modules"
         "Platforms/platform-esp32"
         "TactilityKernel"
-        "TactilityKernelCpp"
         "TactilityFreeRtos"
         "Libraries/lv_screenshot"
         "Libraries/minitar"
@@ -157,7 +156,6 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Tactility)
     add_subdirectory(TactilityFreeRtos)
     add_subdirectory(TactilityKernel)
-    add_subdirectory(TactilityKernelCpp)
     add_subdirectory(Platforms/platform-posix)
     add_subdirectory(Devices/simulator)
     add_subdirectory(Libraries/cJSON)
@@ -187,6 +185,7 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Modules/posix-symbols-module)
     add_subdirectory(Modules/pthread-module)
     add_subdirectory(Modules/service-module)
+    add_subdirectory(Modules/bluetooth-module)
     add_subdirectory(Modules/wifi-module)
     add_subdirectory(Modules/app-module)
     add_subdirectory(Modules/app-hub-module)

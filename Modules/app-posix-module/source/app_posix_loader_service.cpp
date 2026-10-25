@@ -8,6 +8,7 @@
 
 #include <tactility/error.h>
 #include <tactility/log.h>
+#include <tactility/module.h>
 
 #include <service/manager.h>
 
@@ -111,7 +112,7 @@ bool is_executable_file(const std::string& resolved_path) {
 
 // location.location can be either an app's install directory or the .so file directly, mirroring
 // app_esp32_loader_service.cpp's resolve_elf_path(). A "packaged" app's install directory always
-// holds its single binary at the fixed path {dir}/bin/posix-{TACTILITY_POSIX_ARCH}/app.so - a
+// holds its single binary at the fixed path {dir}/bin/{TACTILITY_POSIX_PLATFORM}/app.so - a
 // "terminal" app has no such file (its several binaries keep their own names), so this correctly
 // leaves it unresolvable - terminal apps aren't run through AppLoaderApi (see app/install.h).
 error_t resolve_app_path(const std::string& path, std::string& resolvedPath) {
@@ -119,7 +120,7 @@ error_t resolve_app_path(const std::string& path, std::string& resolvedPath) {
         resolvedPath = path;
         return ERROR_NONE;
     }
-    std::string candidate = path + "/bin/posix-" TACTILITY_POSIX_ARCH "/app.so";
+    std::string candidate = path + "/bin/" TACTILITY_POSIX_PLATFORM "/app.so";
     if (!is_regular_file(candidate)) {
         return ERROR_NOT_FOUND;
     }
@@ -189,6 +190,30 @@ int32_t api_run(AppRuntime runtime_ptr, uint32_t /*app_instance_id*/, int argc, 
     return result;
 }
 
+error_t api_get_module(AppRuntime runtime_ptr, Module** out_module) {
+    auto* runtime = static_cast<PosixAppRuntime*>(runtime_ptr);
+
+    dlerror();
+    void* symbol = dlsym(runtime->handle, "main");
+    const char* lookup_error = dlerror();
+    if (symbol == nullptr || lookup_error != nullptr) {
+        LOG_E(TAG, "dlsym(\"main\") failed: %s", lookup_error != nullptr ? lookup_error : "not found");
+        return ERROR_NOT_FOUND;
+    }
+
+    // A module's main() returns the Module pointer itself, so it's called through its real return type
+    auto* module_main = reinterpret_cast<Module* (*)(int, char**)>(symbol);
+    app_posix_set_current_image(runtime->image_start, runtime->image_end);
+    Module* module = module_main(0, nullptr);
+    app_posix_set_current_image(0, 0);
+    if (module == nullptr) {
+        return ERROR_NOT_FOUND;
+    }
+
+    *out_module = module;
+    return ERROR_NONE;
+}
+
 void api_unload(AppRuntime runtime_ptr) {
     auto* runtime = static_cast<PosixAppRuntime*>(runtime_ptr);
     // The image's static destructors run here, and what they free is the app's own (see app/memory.h)
@@ -216,6 +241,7 @@ AppLoaderApi loader_api = {
     .run = api_run,
     .unload = api_unload,
     .is_executable = api_is_executable,
+    .get_module = api_get_module,
 };
 
 void* create_service(const ServiceManifest*) {

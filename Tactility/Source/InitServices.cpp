@@ -6,13 +6,13 @@
 
 #include <Tactility/service/ServiceManifest.h>
 #include <Tactility/service/ServiceRegistration.h>
-#include <Tactility/service/espnow/EspNowRadio.h>
 #include <Tactility/settings/RadioSettings.h>
 
 #include <generated_assets.h>
 #include <location/module.h>
 #include <app_hub/module.h>
 #include <development/module.h>
+#include <bluetooth/module.h>
 #include <wifi/module.h>
 #include <mesh/module.h>
 #include <mesh_meshcore/module.h>
@@ -34,13 +34,9 @@ namespace tt {
 namespace service {
     // Primary
     namespace audio { extern const ServiceManifest manifest; }
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
-    namespace espnow { extern const ServiceManifest manifest; }
-#endif
 #ifdef ESP_PLATFORM
     namespace rtctime { extern const ServiceManifest manifest; }
 #endif
-    namespace webserver { extern const ServiceManifest manifest; }
 
 }
 
@@ -50,6 +46,7 @@ void registerAndStartServices() {
     if (device_exists_of_type(&AUDIO_STREAM_TYPE)) {
         addService(service::audio::manifest);
     }
+    check(module_ensure_started(&bluetooth_module) == ERROR_NONE);
     check(module_ensure_started(&wifi_module) == ERROR_NONE);
     location_configure_certificate(reinterpret_cast<const char*>(asset_certificates_GTS_Root_R4_pem));
     app_hub_configure_certificate(reinterpret_cast<const char*>(asset_certificates_GTS_Root_R4_pem));
@@ -61,16 +58,10 @@ void registerAndStartServices() {
     check(module_ensure_started(&mesh_meshcore_module) == ERROR_NONE);
     check(module_ensure_started(&mesh_meshtastic_module) == ERROR_NONE);
     check(module_ensure_started(&development_module) == ERROR_NONE);
-    addService(service::webserver::manifest);
 #if defined(__linux__) || defined(__APPLE__)
     check(posix_services_start() == ERROR_NONE);
 #endif
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
-    addService(service::espnow::manifest);
-    // Lets mesh networking run over ESP-NOW
-    service::espnow::registerRadio();
-#endif
 #if defined(ESP_PLATFORM)
     if (device_exists_of_type(&RTC_TYPE)) {
         addService(service::rtctime::manifest);

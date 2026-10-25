@@ -23,7 +23,6 @@ set(DEVICETREE_LOCATION "${PROJECT_ROOT}/Devices/${TACTILITY_DEVICE_ID}")
 list(APPEND REQUIRES_LIST
     # Main projects
     TactilityKernel
-    TactilityKernelCpp
     TactilityFreeRtos
     # Modules/*
     lvgl-module
@@ -53,6 +52,7 @@ list(APPEND REQUIRES_LIST
     gps-generic-module
     gps-meshtastic-module
     service-module
+    bluetooth-module
     wifi-module
     # Libraries/*
     lv_screenshot
@@ -90,11 +90,6 @@ if (DEFINED ENV{ESP_IDF_VERSION})
 
     if ("${IDF_TARGET}" STREQUAL "esp32s3" OR "${IDF_TARGET}" STREQUAL "esp32p4")
         list(APPEND REQUIRES_LIST esp_tinyusb)
-    endif ()
-
-    if ("${IDF_TARGET}" STREQUAL "esp32p4")
-        # EspNowBackendHosted.cpp needs esp_hosted.h / esp_hosted_misc.h.
-        list(APPEND REQUIRES_LIST espressif__esp_hosted)
     endif ()
 
 else ()

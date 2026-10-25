@@ -6,6 +6,7 @@ import http.server
 import io
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -89,7 +90,7 @@ class TtTest(unittest.TestCase):
         with open(os.path.join(directory, "manifest.properties"), "w") as file:
             file.write(f"[target]\ntarget.sdk={version}\ntarget.platforms={platforms}\n")
 
-    def run_tt(self, *arguments, tt_path=TT_PATH, environment=None):
+    def run_tt(self, *arguments, tt_path=TT_PATH, environment=None, input_text=""):
         extra_environment = environment or {}
         environment = dict(os.environ)
         environment.pop("TACTILITY_SDK_PATH", None)
@@ -97,7 +98,7 @@ class TtTest(unittest.TestCase):
         environment["HOME"] = self.home
         environment["TT_CDN"] = f"http://127.0.0.1:{self.server.server_address[1]}"
         environment.pop("TACTILITY_SDK_VERSION", None)
-        return subprocess.run([sys.executable, tt_path, *arguments], cwd=self.work, env=environment, capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, tt_path, *arguments], cwd=self.work, env=environment, capture_output=True, text=True, timeout=60, input=input_text)
 
     def sdk_path(self, *parts):
         return os.path.join(self.home, ".tactility", "sdk", VERSION, *parts)
@@ -144,6 +145,107 @@ class TtTest(unittest.TestCase):
 
     def test_missing_manifest_fails(self):
         result = self.run_tt("echo")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no manifest.properties found", result.stderr)
+
+    def publish_new_project(self, files=None, checksum=None):
+        files = files or {
+            "gui/manifest.properties": "target.sdk=@SDK_VERSION@\nid=@PACKAGE_ID@\napp.0.id=@APP_ID@\napp.0.name=@APP_NAME@\n",
+            "gui/main/Source/main.c": "// gui\n",
+            "terminal/manifest.properties": "target.sdk=@SDK_VERSION@\nid=@PACKAGE_ID@\napp.0.id=@APP_ID@\napp.0.name=@APP_NAME@\napp.0.headless=true\n",
+            "terminal/main/Source/main.c": "// terminal\n",
+        }
+        version_directory = os.path.join(self.cdn, "sdk", VERSION)
+        archive = make_zip(files)
+        with open(os.path.join(version_directory, "new-project.zip"), "wb") as file:
+            file.write(archive)
+        index_path = os.path.join(version_directory, "index.json")
+        with open(index_path) as file:
+            index = json.load(file)
+        index["newProject"] = {"file": "new-project.zip", "sha256": checksum or hashlib.sha256(archive).hexdigest()}
+        with open(index_path, "w") as file:
+            json.dump(index, file)
+
+    def read_work_file(self, *parts):
+        with open(os.path.join(self.work, *parts)) as file:
+            return file.read()
+
+    def test_new_project_uses_defaults_and_the_gui_variant(self):
+        self.publish_new_project()
+        result = self.run_tt("echo", input_text=f"y\n{VERSION}\n\n\n\n\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(self.read_work_file("manifest.properties"), f"target.sdk={VERSION}\nid=example.helloworld\napp.0.id=helloworld\napp.0.name=Hello World\n")
+        self.assertEqual(self.read_work_file("main", "Source", "main.c"), "// gui\n")
+        self.assertEqual(json.loads(result.stdout)["version"], VERSION)
+
+    def test_new_project_with_answers_and_the_terminal_variant(self):
+        self.publish_new_project()
+        result = self.run_tt("echo", input_text=f"yes\n{VERSION}\nterminal\nmy.package\nmyapp\nMy App\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(self.read_work_file("manifest.properties"), f"target.sdk={VERSION}\nid=my.package\napp.0.id=myapp\napp.0.name=My App\napp.0.headless=true\n")
+        self.assertEqual(self.read_work_file("main", "Source", "main.c"), "// terminal\n")
+
+    def test_new_project_module_variant_skips_the_app_questions(self):
+        self.publish_new_project(files={
+            "gui/manifest.properties": "gui\n",
+            "module/manifest.properties": "target.sdk=@SDK_VERSION@\nid=@PACKAGE_ID@\nmodule.0.binary=main\n",
+            "module/main/Source/main.c": "// module\n",
+        })
+        result = self.run_tt("echo", input_text=f"y\n{VERSION}\nmodule\nmy.package\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(self.read_work_file("manifest.properties"), f"target.sdk={VERSION}\nid=my.package\nmodule.0.binary=main\n")
+        self.assertEqual(self.read_work_file("main", "Source", "main.c"), "// module\n")
+        self.assertNotIn("App id", result.stderr)
+
+    def test_new_project_asks_again_for_invalid_answers(self):
+        self.publish_new_project()
+        result = self.run_tt("echo", input_text=f"y\n..\n{VERSION}\nplugin\n\nab\nmy.package\n\nM\nMy App\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("invalid SDK version", result.stderr)
+        self.assertIn("use gui, terminal or module", result.stderr)
+        self.assertIn("use 5 to 32 letters, digits and dots", result.stderr)
+        self.assertIn("use 2 to 32 letters, digits, spaces and dashes", result.stderr)
+        self.assertIn("id=my.package", self.read_work_file("manifest.properties"))
+
+    def test_new_project_rejects_a_wrong_checksum(self):
+        self.publish_new_project(checksum="0" * 64)
+        result = self.run_tt("echo", input_text=f"y\n{VERSION}\n\n\n\n\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("doesn't match its checksum", result.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.work, "manifest.properties")))
+
+    def test_new_project_needs_the_sdk_to_have_one(self):
+        result = self.run_tt("echo", input_text=f"y\n{VERSION}\n\n\n\n\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("has no new project", result.stderr)
+
+    def test_new_project_does_not_overwrite(self):
+        self.publish_new_project()
+        os.makedirs(os.path.join(self.work, "main"))
+        result = self.run_tt("echo", input_text=f"y\n{VERSION}\n\n\n\n\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("already has", result.stderr)
+
+    def test_new_project_from_the_local_sdk(self):
+        local = os.path.join(self.root, "local")
+        os.makedirs(os.path.join(local, "sdk", VERSION, "tools"))
+        with open(os.path.join(local, "sdk", VERSION, "tools", "echo.py"), "w") as file:
+            file.write(ECHO_TOOL)
+        shutil.copy(os.path.join(TOOLS_PATH, "_bootstrap.py"), os.path.join(local, "sdk", VERSION, "tools"))
+        with open(os.path.join(local, "sdk", VERSION, "new-project.zip"), "wb") as file:
+            file.write(make_zip({"gui/manifest.properties": "target.sdk=@SDK_VERSION@\n"}))
+        result = self.run_tt("echo", environment={"TACTILITY_SDK_PATH": local}, input_text=f"y\n{VERSION}\n\n\n\n\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(self.read_work_file("manifest.properties"), f"target.sdk={VERSION}\n")
+
+    def test_without_a_project_the_sdk_version_can_be_given(self):
+        result = self.run_tt("echo", "a", input_text=f"n\n{VERSION}\n")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["version"], VERSION)
+        self.assertFalse(os.path.exists(os.path.join(self.work, "manifest.properties")))
+
+    def test_without_a_project_and_version_it_fails(self):
+        result = self.run_tt("echo", input_text="n\n\n")
         self.assertEqual(result.returncode, 1)
         self.assertIn("no manifest.properties found", result.stderr)
 
@@ -202,6 +304,17 @@ class TtTest(unittest.TestCase):
         for platform in ("posix", "esp32"):
             with open(self.sdk_path(f"platform-{platform}", "commit")) as file:
                 self.assertEqual(file.read(), "commit2", platform)
+
+    def test_requested_platform_that_the_index_no_longer_has_is_refused(self):
+        self.publish_sdk(self.default_tools(), platforms=("posix", "esp32"))
+        self.write_manifest(self.work, platforms="posix")
+        self.assertEqual(self.run_tt("echo").returncode, 3)
+        self.publish_sdk(self.default_tools(), commit="commit2", sdk_content="# sdk 2", platforms=("esp32", "other"))
+        self.expire_index()
+        self.write_manifest(self.work, platforms="posix,other")
+        result = self.run_tt("echo")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("platform posix is not available", result.stderr)
 
     def test_failed_update_sdk_keeps_the_installed_build(self):
         self.write_manifest(self.work)
@@ -388,6 +501,84 @@ class TtTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("command not found", result.stderr)
         self.assertNotIn("_bootstrap", self.run_tt("help").stdout)
+
+    def publish_simulator(self, simulator_platform, sha256=None):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zip_file:
+            zip_file.writestr("Tactility", "#!/bin/sh\necho simulator \"$@\"\n")
+        content = archive.getvalue()
+        version_directory = os.path.join(self.cdn, "sdk", VERSION)
+        file_name = f"Simulator-{simulator_platform}.zip"
+        with open(os.path.join(version_directory, file_name), "wb") as file:
+            file.write(content)
+        index_path = os.path.join(version_directory, "index.json")
+        with open(index_path) as file:
+            index = json.load(file)
+        index["simulators"] = {simulator_platform: {"file": file_name, "sha256": sha256 or hashlib.sha256(content).hexdigest()}}
+        with open(index_path, "w") as file:
+            json.dump(index, file)
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "the simulator only exists for Linux and macOS")
+    def test_simulator_downloads_and_runs_the_simulator_of_this_computer(self):
+        host_platform = f"{'macos' if sys.platform == 'darwin' else 'linux'}-{platform.machine()}"
+        self.publish_sdk(self.default_tools() | {"simulator.py": read_tool("simulator.py")})
+        self.publish_simulator(host_platform)
+        self.write_manifest(self.work)
+        result = self.run_tt("simulator", "a", "b")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "simulator a b")
+        self.assertTrue(os.path.isfile(self.sdk_path(f"simulator-{host_platform}", "Tactility")))
+        self.assertIn("Downloading the simulator", result.stderr)
+        # An installed simulator of the current build isn't downloaded again
+        result = self.run_tt("simulator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Downloading the simulator", result.stderr)
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "the simulator only exists for Linux and macOS")
+    def test_installed_simulator_runs_offline(self):
+        host_platform = f"{'macos' if sys.platform == 'darwin' else 'linux'}-{platform.machine()}"
+        self.publish_sdk(self.default_tools() | {"simulator.py": read_tool("simulator.py")})
+        self.publish_simulator(host_platform)
+        self.write_manifest(self.work)
+        self.assertEqual(self.run_tt("simulator").returncode, 0)
+        shutil.rmtree(self.cdn)
+        self.expire_index()
+        result = self.run_tt("simulator", "a")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "simulator a")
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "the simulator only exists for Linux and macOS")
+    def test_installed_simulator_runs_when_the_download_fails(self):
+        host_platform = f"{'macos' if sys.platform == 'darwin' else 'linux'}-{platform.machine()}"
+        self.publish_sdk(self.default_tools() | {"simulator.py": read_tool("simulator.py")})
+        self.publish_simulator(host_platform)
+        self.write_manifest(self.work)
+        self.assertEqual(self.run_tt("simulator").returncode, 0)
+        with open(self.sdk_path(f"simulator-{host_platform}", "commit"), "w") as file:
+            file.write("older")
+        os.remove(os.path.join(self.cdn, "sdk", VERSION, f"Simulator-{host_platform}.zip"))
+        result = self.run_tt("simulator", "a")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "simulator a")
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "the simulator only exists for Linux and macOS")
+    def test_simulator_refuses_a_download_that_doesnt_match_its_checksum(self):
+        host_platform = f"{'macos' if sys.platform == 'darwin' else 'linux'}-{platform.machine()}"
+        self.publish_sdk(self.default_tools() | {"simulator.py": read_tool("simulator.py")})
+        self.publish_simulator(host_platform, sha256="0" * 64)
+        self.write_manifest(self.work)
+        result = self.run_tt("simulator")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("checksum", result.stderr)
+        self.assertFalse(os.path.exists(self.sdk_path(f"simulator-{host_platform}")))
+
+    def test_simulator_reports_a_missing_platform(self):
+        self.publish_sdk(self.default_tools() | {"simulator.py": read_tool("simulator.py")})
+        self.publish_simulator("other-platform")
+        self.write_manifest(self.work)
+        result = self.run_tt("simulator")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("other-platform", result.stderr)
 
 
 if __name__ == "__main__":
