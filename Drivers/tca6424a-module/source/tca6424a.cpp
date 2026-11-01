@@ -185,7 +185,6 @@ Driver tca6424a_driver = {
     .stop_device = stop,
     .api = static_cast<const void*>(&tca6424a_gpio_api),
     .device_type = &GPIO_CONTROLLER_TYPE,
-    .owner = &tca6424a_module,
     .internal = nullptr
 };
 

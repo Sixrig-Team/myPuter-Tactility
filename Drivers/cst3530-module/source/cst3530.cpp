@@ -222,6 +222,5 @@ Driver cst3530_driver = {
     .stop_device = stop,
     .api = &cst3530_pointer_api,
     .device_type = &POINTER_TYPE,
-    .owner = &cst3530_module,
     .internal = nullptr
 };

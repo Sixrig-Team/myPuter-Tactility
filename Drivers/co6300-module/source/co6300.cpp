@@ -394,7 +394,6 @@ Driver co6300_driver = {
     .stop_device = stop,
     .api = &co6300_display_api,
     .device_type = &DISPLAY_TYPE,
-    .owner = &co6300_module,
     .internal = nullptr
 };
 

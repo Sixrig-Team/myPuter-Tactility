@@ -153,7 +153,6 @@ Driver pca9570_driver = {
     .stop_device = stop,
     .api = static_cast<const void*>(&pca9570_gpio_api),
     .device_type = &GPIO_CONTROLLER_TYPE,
-    .owner = &pca9570_module,
     .internal = nullptr
 };
 

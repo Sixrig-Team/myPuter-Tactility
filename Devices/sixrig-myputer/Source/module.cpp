@@ -257,8 +257,8 @@ static error_t stop() {
     return ERROR_NONE;
 }
 
-Module sixwin_myputer_module = {
-    .name = "sixwin-myputer",
+Module sixrig_myputer_module = {
+    .name = "sixrig-myputer",
     .start = start,
     .stop = stop,
     .drivers = nullptr,
