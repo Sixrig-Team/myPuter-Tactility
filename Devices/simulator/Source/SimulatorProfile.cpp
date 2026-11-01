@@ -34,6 +34,7 @@ static const Profile PROFILES[PROFILE_COUNT] = {
     { "LilyGO T-Lora Pager", 480, 222,  150, false, false, false, true, false },
     { "M5Stack Cardputer", 240, 135, 139, false, true, false, true, false },
     { "M5Stack Tab5",  1280, 720, 250, true, false, false, true, true },
+    { "Sixrig myPuter", 928, 272, 250, false, false, false, true, true },
 };
 
 static size_t activeProfileIndex = 0;
