@@ -1,4 +1,6 @@
+#include <tactility/filesystem/fs.h>
 #include <app/event.h>
+#include <tactility/check.h>
 #include <app/execute.h>
 #include <app/install.h>
 #include <app/start.h>
@@ -9,9 +11,13 @@
 #include <lvgl/icons/shared.h>
 #include <lvgl/insets.h>
 #include <lvgl/lvgl.h>
+#include <lvgl/svg.h>
+#include <lvgl/theme.h>
 #include <lvgl/widgets/card.h>
 #include <lvgl/widgets/icon_button.h>
 #include <lvgl/widgets/toolbar.h>
+
+#include <generated_assets.h>
 
 #include <Tactility/app/files/SupportedFiles.h>
 #include <Tactility/app/files/View.h>
@@ -23,6 +29,7 @@
 #include <Tactility/StringUtils.h>
 
 #include <tactility/device.h>
+#include <tactility/file_ops.h>
 #include <tactility/drivers/usb_host_msc.h>
 #include <tactility/log.h>
 
@@ -115,35 +122,67 @@ static void onOverlayKeyCallback(lv_event_t* event) {
 
 // region File helpers
 
-static bool isExecutablePath(const std::string& path) {
-    AppLocation location { APP_LOCATION_PATH, const_cast<char*>(path.c_str()) };
-    return app_is_executable(location);
-}
-
 static bool isUsbMountPoint(const char* name) {
     return strncmp(name, "usb", 3) == 0 && isdigit((unsigned char)name[3]);
 }
 
-// Returns nullptr for the files that View::resolveIcon() checks, as that reads the file
-static const char* getIcon(const dirent& entry, bool isRoot) {
+enum class FileIcon { Folder, SdCard, Usb, Link, Image, Text, App, Executable, File, Unknown };
+
+struct FileIconAsset {
+    const uint8_t* colour;
+    size_t colourSize;
+    const uint8_t* mono;
+    size_t monoSize;
+};
+
+#define FILE_ICON_ASSET(name) { asset_file_icon_##name##_svg, asset_file_icon_##name##_svg_SIZE, asset_file_icon_##name##_mono_svg, asset_file_icon_##name##_mono_svg_SIZE }
+
+// Indexed by FileIcon, Unknown has no icon
+constexpr FileIconAsset FILE_ICON_ASSETS[] = {
+    FILE_ICON_ASSET(folder),
+    FILE_ICON_ASSET(sd_card),
+    FILE_ICON_ASSET(usb),
+    FILE_ICON_ASSET(link),
+    FILE_ICON_ASSET(image),
+    FILE_ICON_ASSET(text),
+    FILE_ICON_ASSET(app),
+    FILE_ICON_ASSET(executable),
+    FILE_ICON_ASSET(file),
+};
+
+// The icon font glyphs shown instead of the SVG icons, indexed by FileIcon
+constexpr const char* FILE_ICON_GLYPHS[] = {
+    LVGL_ICON_SHARED_FOLDER,
+    LVGL_ICON_SHARED_SD_CARD,
+    LVGL_ICON_SHARED_USB,
+    LVGL_ICON_SHARED_LINK,
+    LVGL_ICON_SHARED_IMAGE,
+    LVGL_ICON_SHARED_DESCRIPTION,
+    LVGL_ICON_SHARED_DEPLOYED_CODE,
+    LVGL_ICON_SHARED_PLAY_ARROW,
+    LVGL_ICON_SHARED_DRAFT,
+};
+
+// Returns Unknown for the files that View::resolveImage() checks, as that reads the file
+static FileIcon getIcon(const dirent& entry, bool isRoot) {
     if (entry.d_type == file::TT_DT_DIR || entry.d_type == file::TT_DT_CHR) {
         if (isRoot && strncmp(entry.d_name, "sd", 2) == 0) {
-            return LVGL_ICON_SHARED_SD_CARD;
+            return FileIcon::SdCard;
         } else if (isRoot && isUsbMountPoint(entry.d_name)) {
-            return LVGL_ICON_SHARED_USB;
+            return FileIcon::Usb;
         } else {
-            return LVGL_ICON_SHARED_FOLDER;
+            return FileIcon::Folder;
         }
     } else if (entry.d_type == file::TT_DT_LNK) {
-        return LVGL_ICON_SHARED_LINK;
+        return FileIcon::Link;
     } else if (isSupportedImageFile(entry.d_name)) {
-        return LVGL_ICON_SHARED_IMAGE;
+        return FileIcon::Image;
     } else if (isSupportedTextFile(entry.d_name)) {
-        return LVGL_ICON_SHARED_DESCRIPTION;
+        return FileIcon::Text;
     } else if (isSupportedAppFile(entry.d_name)) {
-        return LVGL_ICON_SHARED_DEPLOYED_CODE;
+        return FileIcon::App;
     } else {
-        return nullptr;
+        return FileIcon::Unknown;
     }
 }
 
@@ -180,7 +219,7 @@ static bool copyFileContents(const std::string& src, const std::string& dst) {
 }
 
 static bool copyRecursive(const std::string& src, const std::string& dst) {
-    if (file::isDirectory(src)) {
+    if (directory_exists(src.c_str())) {
         if (!file::findOrCreateDirectory(dst, 0755)) {
             return false;
         }
@@ -214,6 +253,89 @@ static bool copyRecursive(const std::string& src, const std::string& dst) {
 
 // endregion
 
+namespace {
+
+struct NavigateJob {
+    std::shared_ptr<State> state;
+    std::string path;
+    bool firstPage;
+    bool selectFirst;
+};
+
+void navigateWork(void* context) {
+    auto* job = static_cast<NavigateJob*>(context);
+    if (job->state->setEntriesForPath(job->path)) {
+        job->state->pushCompletedNavigation(job->firstPage, job->selectFirst);
+    }
+    delete job;
+}
+
+struct RunJob {
+    uint32_t appInstanceId;
+    std::string path;
+};
+
+// Starting an executable loads it from a file
+void runWork(void* context) {
+    auto* job = static_cast<RunJob*>(context);
+    AppLocation location { APP_LOCATION_PATH, const_cast<char*>(job->path.c_str()) };
+    AppInstanceId instance_id = 0;
+    AppStartContext start_context = app_start_context_for_location(location);
+    if (app_start_with_context(&start_context, &instance_id) != ERROR_NONE) {
+        LOG_W(TAG, "Failed to run %s", job->path.c_str());
+        alertdialog::start(job->appInstanceId, "Run failed", "Could not run \"" + file::getLastPathSegment(job->path) + "\".");
+    }
+    delete job;
+}
+
+} // namespace
+
+void View::beginOperation() {
+    pendingOperations++;
+    updateBusySpinner();
+}
+
+void View::endOperation() {
+    pendingOperations--;
+    updateBusySpinner();
+}
+
+void View::updateBusySpinner() {
+    lvgl_lock();
+    if (busy_spinner != nullptr) {
+        lv_obj_set_hidden(busy_spinner, pendingOperations == 0);
+    }
+    lvgl_unlock();
+}
+
+void View::navigateTo(const std::string& path, bool firstPage, bool selectFirst) {
+    if (navigationPending.exchange(true)) {
+        return;
+    }
+    auto* job = new (std::nothrow) NavigateJob { state, path, firstPage, selectFirst };
+    if (job == nullptr || file_ops_queue(navigateWork, job, &fileOpsSub) != ERROR_NONE) {
+        LOG_E(TAG, "Failed to queue reading %s", path.c_str());
+        delete job;
+        navigationPending = false;
+        return;
+    }
+    beginOperation();
+}
+
+void View::onFileOpsCompleted() {
+    while (file_ops_poll(&fileOpsSub) == ERROR_NONE) {
+        navigationPending = false;
+        endOperation();
+        auto result = state->takeCompletedNavigation();
+        if (result.has_value()) {
+            lvgl_lock();
+            onNavigate();
+            lvgl_unlock();
+            update(result->first, result->second);
+        }
+    }
+}
+
 void View::viewFile(const std::string& path, const std::string& filename) {
     std::string file_path = path + "/" + filename;
     LOG_I(TAG, "Clicked %s", file_path.c_str());
@@ -228,7 +350,7 @@ void View::viewFile(const std::string& path, const std::string& filename) {
         imageviewer::start(file_path);
     } else if (isSupportedTextFile(filename)) {
         notes::start(file_path);
-    } else if (isExecutablePath(file_path)) {
+    } else if (state->isExecutable(filename)) {
         runFile(file_path);
     } else {
         LOG_W(TAG, "Opening files of this type is not supported");
@@ -240,18 +362,16 @@ void View::viewFile(const std::string& path, const std::string& filename) {
 void View::runFile(const std::string& file_path) {
     LOG_I(TAG, "Running %s", file_path.c_str());
 
-    if (!isExecutablePath(file_path)) {
+    if (!state->isExecutable(file::getLastPathSegment(file_path))) {
         LOG_W(TAG, "Not executable: %s", file_path.c_str());
         alertdialog::start(appInstanceId, "Run failed", "\"" + file::getLastPathSegment(file_path) + "\" is not an executable.");
         return;
     }
 
-    AppLocation location { APP_LOCATION_PATH, const_cast<char*>(file_path.c_str()) };
-    AppInstanceId instance_id = 0;
-    AppStartContext context = app_start_context_for_location(location);
-    if (app_start_with_context(&context, &instance_id) != ERROR_NONE) {
-        LOG_W(TAG, "Failed to run %s", file_path.c_str());
-        alertdialog::start(appInstanceId, "Run failed", "Could not run \"" + file::getLastPathSegment(file_path) + "\".");
+    auto* job = new (std::nothrow) RunJob { appInstanceId, file_path };
+    if (job == nullptr || file_ops_queue(runWork, job, nullptr) != ERROR_NONE) {
+        LOG_E(TAG, "Failed to queue running %s", file_path.c_str());
+        delete job;
     }
 }
 
@@ -263,10 +383,43 @@ View::View(const std::shared_ptr<State>& state, TaskEventGroup* eventGroup) :
         .onClicked = onTileClicked,
         .onLongPressed = onTileLongPressed,
         .onKey = onTileKey,
+        .resolveImage = resolveImage,
         .resolveIcon = resolveIcon,
         .onPageChanged = onPageChanged,
+        .onTilesCleared = nullptr,
         .userData = this
-    }) {}
+    }) {
+    check(task_event_group_claim_bit(eventGroup, &pasteBit) == ERROR_NONE);
+    check(file_ops_subscribe(&fileOpsSub, eventGroup) == ERROR_NONE);
+}
+
+void View::loadIcons() {
+    if (!areSvgIconsEnabled()) {
+        return;
+    }
+
+    const auto size = static_cast<uint32_t>(lvgl_get_shared_icon_large_font_height());
+    const bool preferMono = lvgl_theme_is_mono();
+    for (size_t i = 0; i < std::size(FILE_ICON_ASSETS); i++) {
+        const auto& asset = FILE_ICON_ASSETS[i];
+        icons[i] = lvgl_svg_rasterize_variants(
+            reinterpret_cast<const char*>(asset.colour), asset.colourSize,
+            reinterpret_cast<const char*>(asset.mono), asset.monoSize,
+            preferMono, size, &iconRecolor[i]
+        );
+        if (icons[i] == nullptr) {
+            LOG_W(TAG, "Failed to rasterize file icon %d", static_cast<int>(i));
+        }
+    }
+}
+
+View::~View() {
+    for (auto* icon : icons) {
+        if (icon != nullptr) lv_draw_buf_destroy(icon);
+    }
+    file_ops_unsubscribe(&fileOpsSub);
+    task_event_group_release_bit(eventGroup, pasteBit);
+}
 
 std::vector<TileGridItem> View::collectItems(void* userData) {
     auto* view = static_cast<View*>(userData);
@@ -275,7 +428,13 @@ std::vector<TileGridItem> View::collectItems(void* userData) {
     view->state->withEntries([&](const std::vector<dirent>& entries) {
         items.reserve(entries.size());
         for (const auto& entry : entries) {
-            items.push_back({ entry.d_name, entry.d_name, getIcon(entry, is_root), false });
+            const auto icon = getIcon(entry, is_root);
+            const lv_image_dsc_t* image = icon == FileIcon::Unknown ? nullptr : reinterpret_cast<const lv_image_dsc_t*>(view->icons[static_cast<size_t>(icon)]);
+            // Files that are resolved later are shown as an executable or a plain file, which are rasterized from the same set
+            const bool recolor = view->iconRecolor[static_cast<size_t>(icon == FileIcon::Unknown ? FileIcon::File : icon)];
+            // The glyph is shown when there is no image: without PSRAM or when it failed to rasterize
+            const char* glyph = icon == FileIcon::Unknown ? nullptr : FILE_ICON_GLYPHS[static_cast<size_t>(icon)];
+            items.push_back({ entry.d_name, entry.d_name, glyph, false, image, recolor });
         }
     });
     return items;
@@ -283,8 +442,13 @@ std::vector<TileGridItem> View::collectItems(void* userData) {
 
 const char* View::resolveIcon(const TileGridItem& item, void* userData) {
     auto* view = static_cast<View*>(userData);
-    const std::string path = file::getChildPath(view->state->getCurrentPath(), item.id);
-    return isExecutablePath(path) ? LVGL_ICON_SHARED_PLAY_ARROW : LVGL_ICON_SHARED_DRAFT;
+    return FILE_ICON_GLYPHS[static_cast<size_t>(view->state->isExecutable(item.id) ? FileIcon::Executable : FileIcon::File)];
+}
+
+const lv_image_dsc_t* View::resolveImage(const TileGridItem& item, void* userData) {
+    auto* view = static_cast<View*>(userData);
+    const auto icon = view->state->isExecutable(item.id) ? FileIcon::Executable : FileIcon::File;
+    return reinterpret_cast<const lv_image_dsc_t*>(view->icons[static_cast<size_t>(icon)]);
 }
 
 void View::onTileClicked(const TileGridItem& item, void* userData) {
@@ -334,9 +498,7 @@ void View::onDirEntryPressed(const std::string& name) {
     switch (dir_entry.d_type) {
         case TT_DT_DIR:
         case TT_DT_CHR:
-            state->setEntriesForChildPath(dir_entry.d_name);
-            onNavigate();
-            update(true);
+            navigateTo(file::getChildPath(state->getCurrentPath(), dir_entry.d_name), true, true);
             break;
 
         case TT_DT_LNK:
@@ -427,10 +589,8 @@ void View::onNavigateUpPressed() {
         LOG_I(TAG, "Navigating upwards");
         std::string new_absolute_path;
         if (string::getPathParent(state->getCurrentPath(), new_absolute_path)) {
-            state->setEntriesForPath(new_absolute_path);
+            navigateTo(new_absolute_path, true, false);
         }
-        onNavigate();
-        update(true);
     }
 }
 
@@ -563,7 +723,7 @@ void View::showActionsForDirectory(lv_obj_t* tile) {
 
 void View::showActionsForFile(lv_obj_t* tile) {
     lv_obj_clean(overlay);
-    if (isExecutablePath(state->getSelectedChildPath())) {
+    if (state->isExecutable(state->getSelectedChildEntry())) {
         addOverlayButton(LVGL_ICON_SHARED_PLAY_ARROW, onRunPressedCallback);
     }
     addCommonFileActions();
@@ -609,13 +769,18 @@ void View::onEjectPressed() {
     }
 
     onNavigate();
-    state->setEntriesForPath(state->getCurrentPath());
-    update(false);
+    navigateTo(state->getCurrentPath(), false, false);
 }
 
-void View::update(bool firstPage) {
+void View::update(bool firstPage, bool selectFirst) {
     if (!lvgl_try_lock(500 / portTICK_PERIOD_MS)) {
         LOG_E(TAG, "Mutex acquisition timeout (%s)", "lvgl");
+        return;
+    }
+
+    // The widgets are gone while another window covers this one
+    if (navigate_up_button == nullptr) {
+        lvgl_unlock();
         return;
     }
 
@@ -626,7 +791,11 @@ void View::update(bool firstPage) {
     if (firstPage) {
         grid.showFirstPage();
     }
-    grid.requestRepopulate(!firstPage);
+    if (firstPage && selectFirst) {
+        grid.requestRepopulateSelectingFirst(navigate_up_button);
+    } else {
+        grid.requestRepopulate(!firstPage);
+    }
 
     lvgl_unlock();
 }
@@ -641,6 +810,8 @@ void View::init(uint32_t appInstanceId, lv_obj_t* parent) {
     auto* toolbar = lvgl_toolbar_create(parent, "Files");
     // The global toolbar nav callback only knows how to stop old-model apps.
     lvgl_toolbar_set_nav_action(toolbar, LV_SYMBOL_CLOSE, onBackPressedCallback, this);
+    busy_spinner = lvgl_toolbar_add_spinner_action(toolbar);
+    lv_obj_set_hidden(busy_spinner, pendingOperations == 0);
     navigate_up_button = lvgl_toolbar_add_image_button_action(toolbar, LV_SYMBOL_UP, &onNavigateUpPressedCallback, this);
     lv_obj_set_hidden(navigate_up_button, is_root);
     auto* previous_button = lvgl_toolbar_add_text_button_action(toolbar, "<", onPageButtonPressedCallback, this);
@@ -665,6 +836,14 @@ void View::init(uint32_t appInstanceId, lv_obj_t* parent) {
     lvgl_grid_navigation_add(overlay);
     lv_obj_add_event_cb(overlay, onOverlayKeyCallback, LV_EVENT_KEY, this);
     lv_obj_set_hidden(overlay, true);
+}
+
+void View::destroyWidgets() {
+    busy_spinner = nullptr;
+    overlay = nullptr;
+    navigate_up_button = nullptr;
+    overflow_button = nullptr;
+    grid.destroyWidgets();
 }
 
 void View::onNavigate() {
@@ -696,14 +875,17 @@ void View::onResult(uint32_t launchId, int32_t result) {
         app_stream_unsubscribe(&inputDialogStream);
     }
 
-    switch (state->getPendingAction()) {
+    // The answer of the overwrite confirmation counts even when the pending action was reset meanwhile
+    const auto action = (pasteDialogId != 0 && launchId == pasteDialogId) ? State::ActionPaste : state->getPendingAction();
+    switch (action) {
         case State::ActionDelete: {
             if (result == 0) {
-                if (file::isDirectory(filepath)) {
+                OperationScope operation(*this);
+                if (directory_exists(filepath.c_str())) {
                     if (!file::deleteRecursively(filepath)) {
                         LOG_W(TAG, "Failed to delete %s", filepath.c_str());
                     }
-                } else if (file::isFile(filepath)) {
+                } else if (file_exists(filepath.c_str())) {
                     if (remove(filepath.c_str()) != 0) {
                         LOG_W(TAG, "Failed to delete %s", filepath.c_str());
                     }
@@ -786,9 +968,17 @@ void View::onResult(uint32_t launchId, int32_t result) {
             break;
         }
         case State::ActionPaste: {
+            // Only the answer of the confirmation that belongs to the pending paste counts
+            if (launchId != pasteDialogId) {
+                break;
+            }
+            pasteDialogId = 0;
+            const std::string paste_source = state->getPendingPasteSource();
+            const bool paste_is_cut = state->getPendingPasteIsCut();
+            state->setPendingPasteSource("", false);
+            state->setPendingAction(State::ActionNone);
             if (result == 0) {
-                auto clipboard = state->getClipboard();
-                if (clipboard.has_value()) {
+                if (!paste_source.empty()) {
                     std::string dst = state->getPendingPasteDst();
 
                     // dst was last checked before the dialog was shown; a writer could
@@ -818,7 +1008,7 @@ void View::onResult(uint32_t launchId, int32_t result) {
                     // file manager; a safer approach would rename dst to a temp path
                     // first and roll back on failure.
                     if (file::deleteRecursively(dst)) {
-                        doPaste(clipboard->first, clipboard->second, dst);
+                        doPaste(paste_source, paste_is_cut, dst);
                     } else {
                         LOG_E(TAG, "Overwrite: failed to remove existing destination: \"%s\"", dst.c_str());
                         state->setPendingAction(State::ActionNone);
@@ -870,27 +1060,53 @@ void View::onPastePressed() {
         return;
     }
 
-    bool dst_exists;
-    struct stat dst_stat {};
+    // The app task does the file system work, as it can block for long on slow storage
+    state->setPasteRequest({ src, dst, is_cut });
+    task_event_group_signal(eventGroup, pasteBit);
+}
 
-    // If dst exists...
-    if (stat(dst.c_str(), &dst_stat) == 0) {
-        state->setPendingPasteDst(dst);
-        state->setPendingPasteDstStat(dst_stat);
-        state->setPendingAction(State::ActionPaste);
-        const std::vector<std::string> choices = {"Overwrite", "Cancel"};
-        alertdialog::start(appInstanceId, "File exists", "Overwrite \"" + entry_name + "\"?", choices);
+void View::onPasteRequested() {
+    auto request = state->takePasteRequest();
+    if (!request.has_value()) return;
+
+    // The pending destination, source and dialog belong to one paste: a second one waits for the answer
+    if (pasteDialogId != 0) {
+        LOG_W(TAG, "Paste: another paste waits for confirmation, skipping");
         return;
     }
 
-    doPaste(src, is_cut, dst);
+    const std::string entry_name = file::getLastPathSegment(request->source);
+
+    // Copying a folder into itself would never end, as the copy is listed while it is being made
+    if (request->destination.starts_with(request->source + "/")) {
+        LOG_W(TAG, "Paste: \"%s\" is inside \"%s\"", request->destination.c_str(), request->source.c_str());
+        alertdialog::start(appInstanceId, "Paste failed", "\"" + entry_name + "\" can't be pasted into itself.");
+        return;
+    }
+
+    struct stat dst_stat {};
+
+    // If dst exists...
+    if (stat(request->destination.c_str(), &dst_stat) == 0) {
+        state->setPendingPasteDst(request->destination);
+        state->setPendingPasteSource(request->source, request->is_cut);
+        state->setPendingPasteDstStat(dst_stat);
+        state->setPendingAction(State::ActionPaste);
+        const std::vector<std::string> choices = {"Overwrite", "Cancel"};
+        pasteDialogId = alertdialog::start(appInstanceId, "File exists", "Overwrite \"" + entry_name + "\"?", choices);
+        return;
+    }
+
+    doPaste(request->source, request->is_cut, request->destination);
 }
 
 void View::doPaste(const std::string& src, bool is_cut, const std::string& dst) {
+    OperationScope operation(*this);
     bool success = false;
     bool src_delete_failed = false;
     if (is_cut) {
         if (rename(src.c_str(), dst.c_str()) != 0) {
+            LOG_W(TAG, "rename() of \"%s\" failed with errno %d", src.c_str(), errno);
             // Fallback for cross-filesystem moves: copy then delete.
             // Only mark success if both halves succeed — if the source removal
             // fails we leave success=false so the clipboard is preserved and
@@ -903,6 +1119,8 @@ void View::doPaste(const std::string& src, bool is_cut, const std::string& dst) 
                     LOG_E(TAG, "Cut: copied \"%s\" to \"%s\" but failed to remove source — manual cleanup required", src.c_str(), dst.c_str());
                 }
             }
+        } else {
+            success = true;
         }
     } else {
         success = copyRecursive(src, dst);
@@ -912,13 +1130,13 @@ void View::doPaste(const std::string& src, bool is_cut, const std::string& dst) 
     if (success) {
         LOG_I(TAG, "%s \"%s\" to \"%s\"", is_cut ? "Moved" : "Copied", src.c_str(), dst.c_str());
         if (is_cut) {
-            state->clearClipboard();
+            state->clearClipboardIfCut(src);
         }
     } else if (src_delete_failed) {
         state->setPendingAction(State::ActionNone); // prevent re-trigger on dialog dismiss
         alertdialog::start(appInstanceId, "Move incomplete", "\"" + filename + "\" was copied but the original could not be removed.\nPlease delete it manually.");
     } else {
-        LOG_E(TAG, "Failed to %s \"%s\" to \"%s\"", is_cut ? "move" : "copy", src.c_str(), dst.c_str());
+        LOG_E(TAG, "Failed to %s \"%s\" to \"%s\" (errno %d)", is_cut ? "move" : "copy", src.c_str(), dst.c_str(), errno);
         state->setPendingAction(State::ActionNone); // prevent re-trigger on dialog dismiss
         alertdialog::start(
             appInstanceId,

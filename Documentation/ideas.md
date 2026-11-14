@@ -2,21 +2,9 @@
 
 ## Before release
 
-- Tactility/Source/service/autorotate/AutoRotate.cpp  
-  TODO: Display settings app might be saving DisplaySettings at the same time. This might corrupt the settings file.
-
 ## Higher Priority
 
-- Make tt.py work without an app project. Ping the device for info.
-- LVGL spinner not working on cl32 v04 (possibly anything monochrome)
-- Find out why the first build of an app with a clean build cache folder always fails
-- Improve posix support: use user home path and system /tmp folder.
-- Drivers/audio-codec-module is not a module. Move it somewhere else. Or make it an actual module.
-- External app loading: Check the version of Tactility and check ESP target hardware to check for compatibility
-  Check during installation process, but also when starting (SD card might have old app install from before Tactility OS update)
-- minitar/untarFile(): "entry->metadata.path" can escape its confined path (e.g. "../something")
-- xl9555 and tca9534 drivers: support `GPIO_FLAG_ACTIVE_LOW` on outputs in software, like tca95xx does.
-  Afterwards the raw level reset handling in cst66xx and tca8418 can use ACTIVE_LOW too.
+- Files app: make reusable system UI for pagination?
 
 ## Medium Priority
 
@@ -88,7 +76,6 @@
 - Chip 8 emulator
 - Discord bot
 - IR transceiver app
-- GPS app
 - Investigate CSI https://stevenmhernandez.github.io/ESP32-CSI-Tool/
 - Calendar
 - RSS reader

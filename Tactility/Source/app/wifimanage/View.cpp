@@ -43,7 +43,7 @@ static void onEnableSwitchChanged(lv_event_t* event) {
     auto* enable_switch = static_cast<lv_obj_t*>(lv_event_get_target(event));
     bool is_on = lv_obj_has_state(enable_switch, LV_STATE_CHECKED);
     auto* bindings = static_cast<Bindings*>(lv_event_get_user_data(event));
-    bindings->onWifiToggled(is_on);
+    bindings->onWifiToggled(bindings->userData, is_on);
 }
 
 static void onConnectToHiddenClicked(lv_event_t* event) {
@@ -66,9 +66,9 @@ void View::connect(lv_event_t* event) {
         LOG_I(TAG, "Clicked AP: %s", ssid.c_str());
         std::string connection_target = self->state->getConnectionTarget();
         if (connection_target == ssid) {
-            self->bindings->onDisconnect();
+            self->bindings->onDisconnect(self->bindings->userData);
         } else {
-            self->bindings->onConnectSsid(ssid);
+            self->bindings->onConnectSsid(self->bindings->userData, ssid);
         }
     } else {
         LOG_W(TAG, "Clicked AP: record %zu/%zu does not exist", index, ap_records.size() - 1);
@@ -295,7 +295,7 @@ void View::init(uint32_t newAppInstanceId, lv_obj_t* parent) {
 
     loading_label = lv_label_create(parent);
     lv_label_set_text(loading_label, "Loading...");
-    lv_obj_add_flag(loading_label, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_floating(loading_label, true);
     lv_obj_align(loading_label, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_hidden(loading_label, true);
 }

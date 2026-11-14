@@ -65,9 +65,9 @@ static error_t gpio_trackball_keyboard_read_key(Device* device, KeyboardKeyData*
 }
 
 static const KeyboardApi GPIO_TRACKBALL_KEYBOARD_API = {
+    .capabilities = KEYBOARD_CAPABILITY_RESTRICTED,
     .read_key = gpio_trackball_keyboard_read_key,
     .get_backlight = nullptr,
-    .is_present = nullptr,
 };
 
 // endregion
@@ -104,6 +104,7 @@ Driver gpio_trackball_keyboard_driver = {
     .compatible = (const char*[]) { "tactility,gpio-trackball-keyboard", nullptr },
     .start_device = nullptr,
     .stop_device = nullptr,
+    .probe = nullptr,
     .api = &GPIO_TRACKBALL_KEYBOARD_API,
     .device_type = &KEYBOARD_TYPE,
     .internal = nullptr
@@ -114,6 +115,7 @@ Driver gpio_trackball_mouse_driver = {
     .compatible = (const char*[]) { "tactility,gpio-trackball-mouse", nullptr },
     .start_device = nullptr,
     .stop_device = nullptr,
+    .probe = nullptr,
     .api = &GPIO_TRACKBALL_MOUSE_API,
     .device_type = &MOUSE_TYPE,
     .internal = nullptr

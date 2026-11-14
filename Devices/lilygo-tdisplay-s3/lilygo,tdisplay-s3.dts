@@ -4,6 +4,7 @@
 #include <tactility/bindings/esp32_ble.h>
 #include <tactility/bindings/esp32_wifi_pinned.h>
 #include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_adc_oneshot.h>
 #include <tactility/bindings/battery_sense.h>
 #include <tactility/bindings/esp32_i8080.h>
@@ -12,10 +13,17 @@
 #include <tactility/bindings/pwm_backlight.h>
 #include <bindings/st7789_i8080.h>
 #include <bindings/button_control.h>
+#include <tactility/bindings/esp32_flash_fatfs.h>
 
 / {
 	compatible = "root";
 	model = "LilyGO T-Display S3";
+
+	flash_fatfs0 {
+		compatible = "espressif,esp32-flash-fatfs";
+		partition-label = "data";
+		mount-path = "/data";
+	};
 
 	wifi0 {
 		compatible = "espressif,esp32-wifi-pinned";
@@ -101,5 +109,10 @@
 		usbdevicemsc0 {
 			compatible = "espressif,esp32-usbdevice-msc";
 		};
+	};
+
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		status = "disabled";
 	};
 };

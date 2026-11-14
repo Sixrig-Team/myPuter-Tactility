@@ -127,9 +127,9 @@ static error_t keyboardDeviceReadKey(Device* device, KeyboardKeyData* data) {
 }
 
 static const KeyboardApi keyboard_api = {
+    .capabilities = 0,
     .read_key = keyboardDeviceReadKey,
     .get_backlight = nullptr,
-    .is_present = nullptr,
 };
 
 static Driver keyboard_driver = {
@@ -137,6 +137,7 @@ static Driver keyboard_driver = {
     .compatible = (const char*[]) { nullptr },
     .start_device = keyboardDeviceStart,
     .stop_device = keyboardDeviceStop,
+    .probe = nullptr,
     .api = &keyboard_api,
     .device_type = &KEYBOARD_TYPE,
     .internal = nullptr,
@@ -168,6 +169,7 @@ static Driver mouse_driver = {
     .compatible = (const char*[]) { nullptr },
     .start_device = nullptr,
     .stop_device = nullptr,
+    .probe = nullptr,
     .api = &mouse_api,
     .device_type = &MOUSE_TYPE,
     .internal = nullptr,

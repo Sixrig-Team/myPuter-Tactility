@@ -22,6 +22,17 @@
 
 #include <cstddef>
 
+#ifdef ESP_PLATFORM
+#include <sdkconfig.h>
+#endif
+
+// Lines per draw buffer from lvgl.drawBufferLines in device.properties, 0 for a tenth of the vertical resolution
+#ifdef CONFIG_TT_LVGL_DRAW_BUFFER_LINES
+constexpr uint16_t DRAW_BUFFER_LINES = CONFIG_TT_LVGL_DRAW_BUFFER_LINES;
+#else
+constexpr uint16_t DRAW_BUFFER_LINES = 0;
+#endif
+
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 constexpr auto* TAG = "lvgl";
@@ -215,13 +226,18 @@ static void idle_repaint_timer_cb(lv_timer_t* timer) {
     }
 }
 
+// A rotation redraws the whole screen. Clearing the panel first draws the new content without ghosting of the old one.
+static void slow_refresh_rotation_cb(lv_event_t* event) {
+    display_clear(static_cast<struct Device*>(lv_event_get_user_data(event)));
+}
+
 void lvgl_devices_attach() {
     lvgl_lock();
 
     lv_disp_t* lvgl_display = NULL;
     bool display_updates_slowly = false;
 
-    struct LvglDeviceList display_devices = { .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
+    struct LvglDeviceList display_devices = { .devices = {}, .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
     device_for_each_of_type(&DISPLAY_TYPE, &display_devices, lvgl_device_list_collect);
     for (size_t i = 0; i < display_devices.count; i++) {
         struct Device* kernel_display_device = display_devices.devices[i];
@@ -248,7 +264,7 @@ void lvgl_devices_attach() {
             display_has_capability(kernel_display_device, DISPLAY_CAPABILITY_CAP_MIRROR);
         bool prefer_external_ram_buffer = display_has_capability(kernel_display_device, DISPLAY_CAPABILITY_PREFER_EXTERNAL_RAM);
         struct LvglDisplayConfig lvgl_display_config = {
-            .buffer_height = (uint16_t)(vres > 10 ? vres / 10 : vres),
+            .buffer_height = DRAW_BUFFER_LINES > 0 ? (DRAW_BUFFER_LINES < vres ? DRAW_BUFFER_LINES : vres) : (uint16_t)(vres > 10 ? vres / 10 : vres),
             .double_buffer = false,
             .sw_rotate = !can_hw_rotate,
             .swap_bytes = swap_bytes,
@@ -270,6 +286,7 @@ void lvgl_devices_attach() {
                     display_clear(kernel_display_device);
                 }
                 first_attach = false;
+                lv_display_add_event_cb(added_display, slow_refresh_rotation_cb, LV_EVENT_RESOLUTION_CHANGED, kernel_display_device);
                 IdleRepaintContext* ctx = &idle_repaint_contexts()[i];
                 if (ctx->timer == nullptr) {
                     ctx->lvgl_display = added_display;
@@ -293,7 +310,7 @@ void lvgl_devices_attach() {
         }
     }
 
-    struct LvglDeviceList pointer_devices = { .count = 0, .limit = LVGL_DEVICES_MAX_COMBINED_INPUT };
+    struct LvglDeviceList pointer_devices = { .devices = {}, .count = 0, .limit = LVGL_DEVICES_MAX_COMBINED_INPUT };
     device_for_each_of_type(&POINTER_TYPE, &pointer_devices, lvgl_device_list_collect);
     device_for_each_of_type(&TOUCH_TYPE, &pointer_devices, lvgl_device_list_collect);
     for (size_t i = 0; i < pointer_devices.count; i++) {
@@ -320,7 +337,7 @@ void lvgl_devices_attach() {
         }
     }
 
-    struct LvglDeviceList keyboard_devices = { .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
+    struct LvglDeviceList keyboard_devices = { .devices = {}, .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
     device_for_each_of_type(&KEYBOARD_TYPE, &keyboard_devices, lvgl_device_list_collect);
     for (size_t i = 0; i < keyboard_devices.count; i++) {
         struct Device* kernel_keyboard_device = keyboard_devices.devices[i];
@@ -332,7 +349,7 @@ void lvgl_devices_attach() {
         }
     }
 
-    struct LvglDeviceList mouse_devices = { .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
+    struct LvglDeviceList mouse_devices = { .devices = {}, .count = 0, .limit = LVGL_DEVICES_MAX_PER_TYPE };
     device_for_each_of_type(&MOUSE_TYPE, &mouse_devices, lvgl_device_list_collect);
     for (size_t i = 0; i < mouse_devices.count; i++) {
         struct Device* kernel_mouse_device = mouse_devices.devices[i];

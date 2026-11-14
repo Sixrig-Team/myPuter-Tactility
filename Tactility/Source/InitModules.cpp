@@ -20,12 +20,15 @@
 #endif
 
 #include <app/module.h>
+#ifdef TT_AUDIO_MODULES_ENABLED
 #include <audio_decoder/module.h>
+#endif
 #include <binfont/module.h>
 #include <c_symbols/module.h>
 #include <cjson_symbols/module.h>
 #include <coreutils/module.h>
 #include <cpp_symbols/module.h>
+#include <development/remote_access.h>
 #include <crypt/module.h>
 #include <freertos/module.h>
 #include <gps/module.h>
@@ -46,6 +49,8 @@ extern "C" Module tactility_audio_module;
 namespace tt {
 
 void initModules() {
+    // Before the first display call, so that remote sessions know the state of the display
+    development_remote_start();
     // The following groups of symbols are sorted by the estimated chance of them occurring
 
     // C/C++/Posix symbols
@@ -66,7 +71,9 @@ void initModules() {
     check(module_ensure_started(&app_module) == ERROR_NONE);
     check(module_ensure_started(&coreutils_module) == ERROR_NONE);
     check(module_ensure_started(&crypt_module) == ERROR_NONE);
+#ifdef TT_AUDIO_MODULES_ENABLED
     check(module_ensure_started(&audio_decoder_module) == ERROR_NONE);
+#endif
     check(module_ensure_started(&mbedtls_module) == ERROR_NONE);
     check(module_ensure_started(&gps_module) == ERROR_NONE);
     check(module_ensure_started(&gps_generic_module) == ERROR_NONE);

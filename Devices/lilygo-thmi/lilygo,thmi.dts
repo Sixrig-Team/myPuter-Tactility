@@ -6,6 +6,7 @@
 #include <tactility/bindings/esp32_ble.h>
 #include <tactility/bindings/esp32_wifi_pinned.h>
 #include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_sdmmc.h>
 #include <tactility/bindings/esp32_i8080.h>
 #include <tactility/bindings/esp32_pwm_ledc.h>
@@ -121,7 +122,6 @@
 
 	sdmmc0 {
 		compatible = "espressif,esp32-sdmmc";
-		status = "disabled"; // Late-init is required, otherwise mounting fails
 		pin-clk = <&gpio0 12 GPIO_FLAG_NONE>;
 		pin-cmd = <&gpio0 11 GPIO_FLAG_NONE>;
 		pin-d0 = <&gpio0 13 GPIO_FLAG_NONE>;
@@ -136,5 +136,10 @@
 		usbdevicemsc0 {
 			compatible = "espressif,esp32-usbdevice-msc";
 		};
+	};
+
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		status = "disabled";
 	};
 };

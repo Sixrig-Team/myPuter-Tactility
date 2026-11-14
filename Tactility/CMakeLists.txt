@@ -30,7 +30,6 @@ list(APPEND REQUIRES_LIST
     app-module
     app-hub-module
     coreutils-module
-    audio-decoder-module
     binfont-module
     lodepng-module
     c-symbols-module
@@ -58,6 +57,24 @@ list(APPEND REQUIRES_LIST
     lv_screenshot
     minitar
 )
+
+# A device can leave out the audio modules to save flash with "modules.audio=false" in device.properties
+set(TT_AUDIO_MODULES_ENABLED TRUE)
+if (EXISTS "${DEVICETREE_LOCATION}/device.properties")
+    file(READ "${DEVICETREE_LOCATION}/device.properties" device_properties_audio_content)
+    # The properties parser accepts spaces around the key and the value
+    if (device_properties_audio_content MATCHES "(^|\n)[ \t]*modules\\.audio[ \t]*=[ \t]*false[ \t]*(\r|\n|$)")
+        set(TT_AUDIO_MODULES_ENABLED FALSE)
+    endif ()
+endif ()
+if (TT_AUDIO_MODULES_ENABLED)
+    list(APPEND REQUIRES_LIST audio-decoder-module)
+elseif (EXISTS "${DEVICETREE_LOCATION}/module.yaml")
+    file(READ "${DEVICETREE_LOCATION}/module.yaml" device_module_yaml_content)
+    if (device_module_yaml_content MATCHES "audio-stream-module")
+        message(FATAL_ERROR "${TACTILITY_DEVICE_ID} has modules.audio=false but its module.yaml depends on audio-stream-module")
+    endif ()
+endif ()
 
 # Check if device has Bluetooth enabled
 # Fixes the sdkconfig bluetooth enable options from getting nuked on non-P4+C6 builds when idf build runs
@@ -88,7 +105,7 @@ if (DEFINED ENV{ESP_IDF_VERSION})
         spi_flash
     )
 
-    if ("${IDF_TARGET}" STREQUAL "esp32s3" OR "${IDF_TARGET}" STREQUAL "esp32p4")
+    if ("${IDF_TARGET}" STREQUAL "esp32s3" OR "${IDF_TARGET}" STREQUAL "esp32p4" OR "${IDF_TARGET}" STREQUAL "esp32s31")
         list(APPEND REQUIRES_LIST esp_tinyusb)
     endif ()
 
@@ -122,7 +139,7 @@ execute_process(
 # so the new component's include dirs never reach the compiler until a fullclean.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${DEVICETREE_LOCATION}/module.yaml"
-    "${DEVICETREE_LOCATION}/device.properties" # due to the "hardware.bluetooth = true" search in this file from this CMakeLists.txt
+    "${DEVICETREE_LOCATION}/device.properties" # due to the "hardware.bluetooth = true" and "modules.audio=false" searches in this file from this CMakeLists.txt
 )
 
 execute_process(
@@ -169,13 +186,17 @@ if (DEFINED ENV{ESP_IDF_VERSION})
 
     idf_component_optional_requires(PRIVATE bt)
 
+    if (TT_AUDIO_MODULES_ENABLED)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE TT_AUDIO_MODULES_ENABLED)
+    endif ()
+
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-unused-variable)
     endif ()
 
     if (NOT DEFINED TACTILITY_SKIP_SPIFFS)
-        # Read-write (skipped when user data lives on the SD card instead of internal flash)
-        if (NOT CONFIG_TT_USER_DATA_LOCATION_SD)
+        # Read-write (only when user data lives on the internal flash partition)
+        if (CONFIG_TT_ROOT_PATH STREQUAL "/data")
             # The folder is not in the repository
             file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../Data/data")
             fatfs_create_spiflash_image(data "${CMAKE_CURRENT_SOURCE_DIR}/../Data/data" FLASH_IN_PROJECT PRESERVE_TIME)
@@ -189,6 +210,9 @@ else ()
     add_executable(Tactility ${SOURCE_FILES})
     target_include_directories(Tactility PUBLIC Include/)
     target_include_directories(Tactility PRIVATE Private/)
+    if (TT_AUDIO_MODULES_ENABLED)
+        target_compile_definitions(Tactility PRIVATE TT_AUDIO_MODULES_ENABLED)
+    endif ()
     target_link_libraries(Tactility PRIVATE ${TACTILITY_REQUIRES_LIST})
     # Exports Tactility's own symbols (-rdynamic) so a dlopen()ed app-posix-module app can resolve
     # calls back into it - the OS-native equivalent of app-esp32-module's custom symbol resolver.
@@ -247,12 +271,40 @@ if (DEFINED ENV{ESP_IDF_VERSION})
 else ()
     set(fonts_simulator 1)
 endif ()
-add_custom_target(GeneratedFonts ALL
-    COMMAND python "${CMAKE_SOURCE_DIR}/Buildscripts/generate-fonts.py"
+set(FONT_GENERATOR "${CMAKE_SOURCE_DIR}/Buildscripts/generate-fonts.py")
+# The generator reads the device DTS files, the font assets and the icon/version sources. Track
+# them so an incremental build picks up a changed TTF or codepoint list.
+file(GLOB DEVICE_FONT_INPUTS CONFIGURE_DEPENDS "${DEVICETREE_LOCATION}/*.dts")
+list(APPEND DEVICE_FONT_INPUTS
+    "${CMAKE_SOURCE_DIR}/Data/system/fonts/AdwaitaSans.ttf"
+    "${CMAKE_SOURCE_DIR}/Data/system/fonts/AdwaitaMono.ttf"
+    "${CMAKE_SOURCE_DIR}/Data/system/fonts/MaterialSymbolsRounded.ttf"
+    "${CMAKE_SOURCE_DIR}/Data/system/fonts/MaterialSymbolsRounded.codepoints"
+    "${CMAKE_SOURCE_DIR}/Tactility/Private/Tactility/lvgl/FontVersions.h"
+    "${CMAKE_SOURCE_DIR}/Modules/lvgl-module/source/icon_names.c"
+    "${CMAKE_SOURCE_DIR}/Modules/lvgl-module/include/lvgl/icons/names.h"
+)
+# The generator builds its own host tool from these sources; a change to the renderer must also
+# invalidate the embedded font bytes.
+file(GLOB_RECURSE BINFONT_TOOL_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/Buildscripts/BinfontTool/*.c*"
+    "${CMAKE_SOURCE_DIR}/Buildscripts/BinfontTool/*.h"
+    "${CMAKE_SOURCE_DIR}/Modules/binfont-module/source/*.c*"
+    "${CMAKE_SOURCE_DIR}/Modules/binfont-module/include/*.h"
+    "${CMAKE_SOURCE_DIR}/Modules/binfont-module/private/*.h"
+    "${CMAKE_SOURCE_DIR}/TactilityKernel/source/memory_posix.cpp"
+)
+add_custom_command(
+    OUTPUT "${GENERATED_DIR}/generated_fonts.c" "${GENERATED_DIR}/generated_fonts.h"
+    COMMAND python "${FONT_GENERATOR}"
         "${DEVICETREE_LOCATION}" ${fonts_simulator} "${GENERATED_DIR}"
-    BYPRODUCTS "${GENERATED_DIR}/generated_fonts.c" "${GENERATED_DIR}/generated_fonts.h"
+    DEPENDS "${FONT_GENERATOR}" "${DEVICETREE_LOCATION}/device.properties"
+        ${DEVICE_FONT_INPUTS} ${BINFONT_TOOL_INPUTS}
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     COMMENT "Generating font source files..."
+)
+add_custom_target(GeneratedFonts ALL
+    DEPENDS "${GENERATED_DIR}/generated_fonts.c" "${GENERATED_DIR}/generated_fonts.h"
 )
 set_source_files_properties("${GENERATED_DIR}/generated_fonts.c" PROPERTIES GENERATED TRUE)
 set_source_files_properties("${GENERATED_DIR}/generated_fonts.h" PROPERTIES GENERATED TRUE)

@@ -62,15 +62,38 @@ error_t app_manager_add_package(const struct PackageManifest* package, const cha
 error_t app_manager_remove_package(const char* package_id);
 
 /**
+ * Called after a package was registered or unregistered, on the thread that changed it and with no
+ * app-module lock held. Must not block: signal another task and return.
+ */
+typedef void (*AppPackageListenerFn)(void* context);
+
+/**
+ * Registers a listener for app_manager_add_package() and app_manager_remove_package().
+ * @retval ERROR_ALREADY_EXISTS the same listener and context are registered already
+ * @retval ERROR_NONE on success
+ */
+error_t app_manager_add_package_listener(AppPackageListenerFn listener, void* context);
+
+/**
+ * Unregisters a listener added with app_manager_add_package_listener(). Does nothing when it isn't registered.
+ * Waits for a notification that is running, so the listener and its context are no longer used when this returns.
+ * A listener that is removed by another listener during a notification is not called afterwards either.
+ * Don't call it while holding a lock that the listener needs.
+ */
+void app_manager_remove_package_listener(AppPackageListenerFn listener, void* context);
+
+/**
  * @param[out] out_package set to a copy of the package on success
  * @retval ERROR_NOT_FOUND no package with this id is registered
  * @retval ERROR_NONE on success
  */
-error_t app_manager_find_package(const char* package_id, struct PackageManifest* out_package);
+error_t app_manager_find_package(const char* package_id, struct PackageSummary* out_package);
 
 /** One registered package, handed to AppPackageVisitorFn - see app_manager_for_each_package(). */
 struct AppPackage {
-    struct PackageManifest package;
+    struct PackageSummary package;
+    /** The result of app_package_manifest_is_compatible() when the package was registered. */
+    bool compatible;
     /** How many entries @a app_ids points to. */
     size_t app_id_count;
     /** Valid only for the duration of the app_manager_for_each_package() call that produced

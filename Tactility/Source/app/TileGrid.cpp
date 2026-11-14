@@ -5,14 +5,23 @@
 #include <lvgl/grid_navigation.h>
 #include <lvgl/insets.h>
 #include <lvgl/theme.h>
-#include <lvgl/widgets/badge.h>
 #include <lvgl/widgets/icon_button.h>
 #include <lvgl/widgets/page_indicator.h>
+
+#include <tactility/memory.h>
 
 #include <algorithm>
 #include <string>
 
 namespace tt::app {
+
+bool areSvgIconsEnabled() {
+#ifdef ESP_PLATFORM
+    return memory_external_total() > 0;
+#else
+    return true;
+#endif
+}
 
 namespace {
 
@@ -23,8 +32,11 @@ constexpr uint32_t MIN_LABEL_WIDTH_IN_FONT_SIZES = 6;
 struct PageLayout {
     int32_t iconSize;
     int32_t pad;
+    int32_t framePad;
+    int32_t labelGap;
     int32_t tileWidth;
     int32_t tileHeight;
+    int32_t leftOffset;
     int32_t topOffset;
     uint32_t pageSize;
 };
@@ -32,21 +44,29 @@ struct PageLayout {
 PageLayout computePageLayout(lv_obj_t* grid) {
     const auto icon_size = static_cast<int32_t>(lvgl_get_shared_icon_large_font_height());
     const auto pad = icon_size / 16;
+    // The focus ring is drawn inside the frame, at most 2dp wide, and leaves 1dp to the icon
+    const auto frame_pad = LV_DPX(2) + LV_DPX(1);
+    const auto label_gap = lvgl_theme_lerp(LV_DPX(1), LV_DPX(4), lvgl_theme_get_spacing());
     const auto gap = TILE_GAP;
     const auto text_height = lv_font_get_line_height(lvgl_get_text_font(FONT_SIZE_SMALL));
     // The label needs room for a few characters, also when the icon font is smaller (e.g. a fallback)
     const auto text_min_width = static_cast<int32_t>(MIN_LABEL_WIDTH_IN_FONT_SIZES * lvgl_get_text_font_height(FONT_SIZE_SMALL));
     const auto tile_min_width = std::max<int32_t>(2 * icon_size, text_min_width) + 2 * pad;
-    const auto tile_height = 2 * pad + icon_size + pad / 2 + text_height;
+    const auto tile_height = 2 * frame_pad + icon_size + label_gap + text_height + pad;
     const auto available_width = lv_obj_get_content_width(grid);
     const auto available_height = lv_obj_get_content_height(grid);
     const auto columns = std::max<int32_t>(1, (available_width + gap) / (tile_min_width + gap));
     const auto rows = std::max<int32_t>(1, (available_height + gap) / (tile_height + gap));
+    const auto tile_width = std::max<int32_t>(tile_min_width, (available_width - (columns - 1) * gap) / columns);
     return {
         .iconSize = icon_size,
         .pad = pad,
-        .tileWidth = std::max<int32_t>(tile_min_width, (available_width - (columns - 1) * gap) / columns),
+        .framePad = frame_pad,
+        .labelGap = label_gap,
+        .tileWidth = tile_width,
         .tileHeight = tile_height,
+        // The pixels that don't divide over the columns are split over both sides
+        .leftOffset = std::max<int32_t>(0, (available_width - (columns * tile_width + (columns - 1) * gap)) / 2),
         .topOffset = std::max<int32_t>(0, (available_height - (rows * tile_height + (rows - 1) * gap)) / 2),
         .pageSize = static_cast<uint32_t>(columns * rows)
     };
@@ -200,6 +220,11 @@ void TileGrid::onGridDeleted(lv_event_t* e) {
     lv_async_call_cancel(onDeferredResize, lv_event_get_user_data(e));
     lv_async_call_cancel(onDeferredNextPage, lv_event_get_user_data(e));
     lv_async_call_cancel(onDeferredPreviousPage, lv_event_get_user_data(e));
+
+    // The fallback widget belongs to a window that is going away too, so the cancelled request must not select it later
+    auto* self = static_cast<TileGrid*>(lv_event_get_user_data(e));
+    self->selectFirstOnRepopulate = false;
+    self->emptyFallback = nullptr;
 }
 
 // Deferred: page size depends on the grid size, which is final only after the layout pass that triggered this.
@@ -253,6 +278,15 @@ void TileGrid::onGridGesture(lv_event_t* e) {
     lv_async_call(direction == LV_DIR_LEFT ? onDeferredNextPage : onDeferredPreviousPage, self);
 }
 
+void TileGrid::onTileStateChanged(lv_event_t* e) {
+    constexpr auto MIRRORED = static_cast<lv_state_t>(LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY | LV_STATE_PRESSED | LV_STATE_CHECKED);
+    lv_obj_t* tile = lv_event_get_target_obj(e);
+    auto* frame = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+    const lv_state_t state = lv_obj_get_state(tile);
+    lv_obj_remove_state(frame, static_cast<lv_state_t>(MIRRORED & ~state));
+    lv_obj_add_state(frame, static_cast<lv_state_t>(MIRRORED & state));
+}
+
 void TileGrid::onTileClicked(lv_event_t* e) {
     const auto* self = static_cast<TileGrid*>(lv_event_get_user_data(e));
     self->callbacks.onClicked(*getTileItem(e), self->callbacks.userData);
@@ -269,8 +303,17 @@ void TileGrid::onTileKey(lv_event_t* e) {
 }
 
 void TileGrid::requestRepopulate(bool keepSelection) {
+    // The latest request decides the selection policy
     keepSelectionOnRepopulate = keepSelection;
+    selectFirstOnRepopulate = false;
+    emptyFallback = nullptr;
     lv_async_call(onDeferredRepopulate, this);
+}
+
+void TileGrid::requestRepopulateSelectingFirst(lv_obj_t* fallback) {
+    requestRepopulate(false);
+    selectFirstOnRepopulate = true;
+    emptyFallback = fallback;
 }
 
 bool TileGrid::isPagingVisible() const {
@@ -305,13 +348,21 @@ void TileGrid::populate() {
         }
     }
     keepSelectionOnRepopulate = true;
+    const bool selectFirst = selectFirstOnRepopulate && !lvgl_indev_exists(LV_INDEV_TYPE_POINTER);
+    lv_obj_t* fallback = emptyFallback;
+    selectFirstOnRepopulate = false;
+    emptyFallback = nullptr;
 
     // Old tiles hold pointers into items, so they are deleted before items is replaced.
     lv_obj_clean(grid);
+    if (callbacks.onTilesCleared != nullptr) {
+        callbacks.onTilesCleared(callbacks.userData);
+    }
     items = callbacks.collect(callbacks.userData);
 
     // Centers a full page of rows, so a partially filled last page keeps its rows in the same positions.
     lv_obj_set_style_pad_top(grid, 0, LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_left(grid, 0, LV_STATE_DEFAULT);
     PageLayout layout = computePageLayout(grid);
     const uint32_t item_count = items.size();
     uint32_t page_count = std::max<uint32_t>(1, (item_count + layout.pageSize - 1) / layout.pageSize);
@@ -329,6 +380,7 @@ void TileGrid::populate() {
     populatedWidth = lv_obj_get_width(grid);
     populatedHeight = lv_obj_get_height(grid);
     lv_obj_set_style_pad_top(grid, layout.topOffset, LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_left(grid, layout.leftOffset, LV_STATE_DEFAULT);
 
     // Follows the focused item onto its new page, e.g. after a reorder moved it.
     if (!focusedId.empty()) {
@@ -353,43 +405,74 @@ void TileGrid::populate() {
     for (uint32_t i = first; i < last; i++) {
         const auto& item = items[i];
 
-        // The theme styles the tile as an icon button, including its focus and pressed states
-        lv_obj_t* tile = lvgl_icon_button_create(grid);
+        // The tile receives the input, its icon frame shows the focus, pressed and checked states of the theme's icon button
+        lv_obj_t* tile = lv_obj_create(grid);
+        lv_obj_remove_style_all(tile);
         lv_obj_set_size(tile, layout.tileWidth, layout.tileHeight);
-        lv_obj_set_style_pad_all(tile, layout.pad, LV_STATE_DEFAULT);
-        lv_obj_set_style_pad_row(tile, layout.pad / 2, LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_bottom(tile, layout.pad, LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_row(tile, layout.labelGap, LV_STATE_DEFAULT);
         lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_clickable(tile, true);
+        lv_obj_set_click_focusable(tile, true);
+        lv_obj_set_scrollable(tile, false);
         lv_obj_set_user_data(tile, const_cast<TileGridItem*>(&item));
 
-        lv_obj_t* icon = lv_label_create(tile);
-        lv_obj_set_style_text_font(icon, lvgl_get_shared_icon_large_font(), LV_STATE_DEFAULT);
-        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_STATE_DEFAULT);
-        lv_obj_set_size(icon, layout.iconSize, layout.iconSize);
+        lv_obj_t* frame = lvgl_icon_button_create(tile);
+        lv_obj_set_size(frame, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_all(frame, layout.framePad, LV_STATE_DEFAULT);
+        // Concentric with the rounded corners of the icon, which have a radius of 22 in 96
+        lv_obj_set_style_radius(frame, layout.iconSize * 22 / 96 + layout.framePad, LV_STATE_DEFAULT);
+        // Grid navigation only removes direct children from the input group, and the tile is the focus target
+        lv_group_remove_obj(frame);
+        lv_obj_set_clickable(frame, false);
+        lv_obj_set_click_focusable(frame, false);
+        lv_obj_set_scrollable(frame, false);
+        lv_obj_add_event_cb(tile, onTileStateChanged, LV_EVENT_STATE_CHANGED, frame);
+
+        const lv_image_dsc_t* image_src = item.image;
         const char* icon_text = item.icon;
-        if (icon_text == nullptr && callbacks.resolveIcon != nullptr) {
-            icon_text = callbacks.resolveIcon(item, callbacks.userData);
+        if (image_src == nullptr && icon_text == nullptr) {
+            if (callbacks.resolveImage != nullptr) {
+                image_src = callbacks.resolveImage(item, callbacks.userData);
+            }
+            if (image_src == nullptr && callbacks.resolveIcon != nullptr) {
+                icon_text = callbacks.resolveIcon(item, callbacks.userData);
+            }
         }
-        lv_label_set_text(icon, icon_text != nullptr ? icon_text : "");
-        if (iconColor == IconColor::Primary) {
-            lv_obj_set_style_text_color(icon, lv_theme_get_color_primary(icon), LV_STATE_DEFAULT);
-        } else if (iconColor == IconColor::Secondary) {
-            lv_obj_set_style_text_color(icon, lv_theme_get_color_secondary(icon), LV_STATE_DEFAULT);
+        if (image_src != nullptr) {
+            lv_obj_t* image = lv_image_create(frame);
+            lv_image_set_src(image, image_src);
+            lv_obj_set_size(image, layout.iconSize, layout.iconSize);
+            if (item.imageRecolor) {
+                lv_color_t color = lv_obj_get_style_text_color(frame, LV_PART_MAIN);
+                if (iconColor == IconColor::Primary) {
+                    color = lv_theme_get_color_primary(image);
+                } else if (iconColor == IconColor::Secondary) {
+                    color = lv_theme_get_color_secondary(image);
+                }
+                lv_obj_set_style_image_recolor(image, color, LV_STATE_DEFAULT);
+                lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, LV_STATE_DEFAULT);
+            }
+        } else {
+            lv_obj_t* icon = lv_label_create(frame);
+            lv_obj_set_style_text_font(icon, lvgl_get_shared_icon_large_font(), LV_STATE_DEFAULT);
+            lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_STATE_DEFAULT);
+            lv_obj_set_size(icon, layout.iconSize, layout.iconSize);
+            lv_label_set_text(icon, icon_text != nullptr ? icon_text : "");
+            // A placeholder for an image that isn't loaded yet has the theme's text colour
+            lv_obj_set_style_text_color(icon, lv_obj_get_style_text_color(frame, LV_PART_MAIN), LV_STATE_DEFAULT);
         }
 
         lv_obj_t* label = lv_label_create(tile);
+        // Favourites have a label in the theme's secondary colour
+        lv_obj_set_style_text_color(label, item.highlighted ? lv_theme_get_color_secondary(label) : lv_obj_get_style_text_color(frame, LV_PART_MAIN), LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(label, lvgl_get_text_font(FONT_SIZE_SMALL), LV_STATE_DEFAULT);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_STATE_DEFAULT);
         // Dots mode needs a fixed height, otherwise the label wraps instead of truncating
         lv_obj_set_size(label, LV_PCT(100), lv_font_get_line_height(lvgl_get_text_font(FONT_SIZE_SMALL)));
         lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
         lv_label_set_text(label, item.name.c_str());
-
-        // A badge marks favourites, as it doesn't look like the focus indicator
-        if (item.highlighted) {
-            auto* badge = lvgl_badge_create(tile);
-            lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, 0, 0);
-        }
 
         lv_obj_add_event_cb(tile, onTileClicked, LV_EVENT_SHORT_CLICKED, this);
         if (callbacks.onLongPressed != nullptr) {
@@ -407,6 +490,23 @@ void TileGrid::populate() {
     if (focusedTile != nullptr) {
         lv_group_focus_obj(grid);
         lv_gridnav_set_focused(grid, focusedTile, LV_ANIM_OFF);
+    } else if (selectFirst && group != nullptr) {
+        if (lv_obj_get_child_count(grid) > 0) {
+            lv_group_focus_obj(grid);
+            lv_gridnav_set_focused(grid, lv_obj_get_child(grid, 0), LV_ANIM_OFF);
+        } else if (fallback != nullptr) {
+            // A widget in a grid navigation container isn't a group member: the container is
+            lv_obj_t* container = lv_obj_get_parent(fallback);
+            while (container != nullptr && !lvgl_grid_navigation_is_container(container)) {
+                container = lv_obj_get_parent(container);
+            }
+            if (container != nullptr) {
+                lv_group_focus_obj(container);
+                lv_gridnav_set_focused(container, fallback, LV_ANIM_OFF);
+            } else {
+                lv_group_focus_obj(fallback);
+            }
+        }
     } else if (!keepSelection && group != nullptr && lv_group_get_focused(group) == grid) {
         // Grid navigation selects the first new tile when the grid is focused, but a page change shows no selection.
         // The next key that moves the focus selects a tile again.

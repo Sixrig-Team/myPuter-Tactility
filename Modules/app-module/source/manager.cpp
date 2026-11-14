@@ -26,7 +26,54 @@
 
 #define TAG "app_manager"
 
+static void notify_package_listeners() {
+    auto& ledger = app_ledger();
+    // Removing a listener waits for this, so a listener never runs after its removal returned
+    recursive_mutex_lock(&ledger.listener_dispatch_mutex);
+    mutex_lock(&ledger.mutex);
+    const auto listeners = ledger.package_listeners;
+    mutex_unlock(&ledger.mutex);
+    for (const auto& listener : listeners) {
+        // A listener that an earlier listener removed during this notification must not be called anymore.
+        // Other threads can't remove one meanwhile, as they wait for the dispatch mutex.
+        mutex_lock(&ledger.mutex);
+        const bool registered = std::ranges::any_of(ledger.package_listeners, [&](const AppPackageListener& existing) {
+            return existing.function == listener.function && existing.context == listener.context;
+        });
+        mutex_unlock(&ledger.mutex);
+        if (registered) {
+            listener.function(listener.context);
+        }
+    }
+    recursive_mutex_unlock(&ledger.listener_dispatch_mutex);
+}
+
 extern "C" {
+
+error_t app_manager_add_package_listener(AppPackageListenerFn listener, void* context) {
+    auto& ledger = app_ledger();
+    mutex_lock(&ledger.mutex);
+    for (const auto& existing : ledger.package_listeners) {
+        if (existing.function == listener && existing.context == context) {
+            mutex_unlock(&ledger.mutex);
+            return ERROR_ALREADY_EXISTS;
+        }
+    }
+    ledger.package_listeners.push_back({ listener, context });
+    mutex_unlock(&ledger.mutex);
+    return ERROR_NONE;
+}
+
+void app_manager_remove_package_listener(AppPackageListenerFn listener, void* context) {
+    auto& ledger = app_ledger();
+    recursive_mutex_lock(&ledger.listener_dispatch_mutex);
+    mutex_lock(&ledger.mutex);
+    std::erase_if(ledger.package_listeners, [&](const AppPackageListener& existing) {
+        return existing.function == listener && existing.context == context;
+    });
+    mutex_unlock(&ledger.mutex);
+    recursive_mutex_unlock(&ledger.listener_dispatch_mutex);
+}
 
 error_t app_manager_add(const AppManifest* manifest) {
     auto& ledger = app_ledger();
@@ -86,15 +133,43 @@ error_t app_manager_add_package(const PackageManifest* package, const char* cons
         LOG_E(TAG, "Package with id '%s' is already registered", package->id);
         return ERROR_INVALID_ARGUMENT;
     }
-    AppPackageRecord record { .package = *package, .app_ids = {} };
+    AppPackageRecord record { .package = {}, .compatible = app_package_manifest_is_compatible(package), .app_ids = {} };
+    memcpy(record.package.id, package->id, sizeof(record.package.id));
+    memcpy(record.package.version_name, package->version_name, sizeof(record.package.version_name));
+    record.package.version_code = package->version_code;
     record.app_ids.reserve(app_id_count);
     for (size_t i = 0; i < app_id_count; i++) {
         record.app_ids.emplace_back(app_ids[i]);
     }
+    // An app id belongs to one package: another package can't register an id that is installed already
+    for (const auto& [id, other] : ledger.packages) {
+        for (const auto& app_id : record.app_ids) {
+            if (std::ranges::find(other.app_ids, app_id) != other.app_ids.end()) {
+                mutex_unlock(&ledger.mutex);
+                LOG_E(TAG, "App '%s' is installed by package '%s' already", app_id.c_str(), id.c_str());
+                return ERROR_ALREADY_EXISTS;
+            }
+        }
+    }
     ledger.packages[package->id] = std::move(record);
     mutex_unlock(&ledger.mutex);
 
+    notify_package_listeners();
     return ERROR_NONE;
+}
+
+bool app_manager_app_is_owned_by_other_package(const char* app_id, const char* package_id) {
+    auto& ledger = app_ledger();
+    mutex_lock(&ledger.mutex);
+    bool owned = false;
+    for (const auto& [id, record] : ledger.packages) {
+        if (id != package_id && std::ranges::find(record.app_ids, app_id) != record.app_ids.end()) {
+            owned = true;
+            break;
+        }
+    }
+    mutex_unlock(&ledger.mutex);
+    return owned;
 }
 
 error_t app_manager_remove_package(const char* package_id) {
@@ -108,10 +183,11 @@ error_t app_manager_remove_package(const char* package_id) {
     ledger.packages.erase(iterator);
     mutex_unlock(&ledger.mutex);
 
+    notify_package_listeners();
     return ERROR_NONE;
 }
 
-error_t app_manager_find_package(const char* package_id, PackageManifest* out_package) {
+error_t app_manager_find_package(const char* package_id, PackageSummary* out_package) {
     auto& ledger = app_ledger();
     mutex_lock(&ledger.mutex);
     auto iterator = ledger.packages.find(package_id);
@@ -133,7 +209,7 @@ void app_manager_for_each_package(AppPackageVisitorFn visitor, void* context) {
         for (const auto& app_id : record.app_ids) {
             app_id_ptrs.push_back(app_id.c_str());
         }
-        AppPackage pkg { .package = record.package, .app_id_count = app_id_ptrs.size(), .app_ids = app_id_ptrs.data() };
+        AppPackage pkg { .package = record.package, .compatible = record.compatible, .app_id_count = app_id_ptrs.size(), .app_ids = app_id_ptrs.data() };
         visitor(&pkg, context);
     }
     mutex_unlock(&ledger.mutex);
@@ -149,6 +225,17 @@ error_t app_manager_start_internal(const AppStartContext* context, AppInstanceId
     }
 
     auto& ledger = app_ledger();
+
+    // Packages that were installed before an OS update can have become incompatible
+    mutex_lock(&ledger.mutex);
+    for (const auto& record : ledger.packages | std::views::values) {
+        if (!record.compatible && std::ranges::any_of(record.app_ids, [&](const std::string& app_id) { return app_id == context->id; })) {
+            mutex_unlock(&ledger.mutex);
+            LOG_E(TAG, "%s is not compatible with this device", context->id);
+            return ERROR_NOT_SUPPORTED;
+        }
+    }
+    mutex_unlock(&ledger.mutex);
 
     mutex_lock(&ledger.mutex);
     AppInstanceId target_id = ledger.next_instance_id++;

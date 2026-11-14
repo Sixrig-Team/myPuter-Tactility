@@ -23,6 +23,7 @@
 #include <lvgl/icons/statusbar.h>
 #include <lvgl/lvgl.h>
 
+#include <app/install.h>
 #include <app_hub/app_hub.h>
 
 #include <cstring>
@@ -100,11 +101,6 @@ static const char* getBluetoothStatusIcon(BtRadioState state, bool scanning, boo
     return nullptr;
 }
 
-static const char* getSdCardStatusIcon(bool mounted) {
-    if (mounted) return LVGL_ICON_STATUSBAR_SD_CARD;
-    return LVGL_ICON_STATUSBAR_SD_CARD_ALERT;
-}
-
 static const char* getPowerStatusIcon() {
     // TODO: Support multiple power devices?
     Device* power = nullptr;
@@ -162,6 +158,8 @@ class StatusbarService final : public Service {
     bool usb_last_state = false;
     int8_t install_icon_id;
     bool install_last_state = false;
+    /** The number of app_install() calls seen by the previous update, to show installs that ended between two updates */
+    uint32_t install_seen_count = app_install_get_started_count();
     TaskEventGroup appHubEventGroup {};
     AppHubEventSubscription appHubSubscription {};
     bool appHubSubscribed = false;
@@ -316,25 +314,32 @@ class StatusbarService final : public Service {
                 installingApps.erase(event.app_id);
             }
         }
-        const bool installing = !installingApps.empty();
+        const uint32_t startedCount = app_install_get_started_count();
+        const bool startedSinceLastUpdate = startedCount != install_seen_count;
+        install_seen_count = startedCount;
+        const bool installing = !installingApps.empty() || app_install_is_active() || startedSinceLastUpdate;
         if (installing != install_last_state) {
             lvgl_statusbar_icon_set_visibility(install_icon_id, installing);
             install_last_state = installing;
         }
     }
 
+    void updateIcons() {
+        if (lvgl_try_lock(200)) {
+            updateGpsIcon();
+            updateMeshIcon();
+            updateBluetoothIcon();
+            updateWifiIcon();
+            updatePowerStatusIcon();
+            updateUsbIcon();
+            updateInstallIcon();
+            lvgl_unlock();
+        }
+    }
+
     void update() {
         if (lvgl_is_running()) {
-            if (lvgl_try_lock(200)) {
-                updateGpsIcon();
-                updateMeshIcon();
-                updateBluetoothIcon();
-                updateWifiIcon();
-                updatePowerStatusIcon();
-                updateUsbIcon();
-                updateInstallIcon();
-                lvgl_unlock();
-            }
+            updateIcons();
         }
     }
 
@@ -382,7 +387,8 @@ public:
 
         auto service = findServiceById<StatusbarService>(manifest.id);
         assert(service);
-        service->update();
+        // LVGL only counts as running after its start callback returned, which is what starts this service
+        service->updateIcons();
 
         updateTimer = std::make_unique<Timer>(Timer::Type::Periodic, pdMS_TO_TICKS(1000), [service] {
             service->update();

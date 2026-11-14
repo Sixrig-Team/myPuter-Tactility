@@ -1,6 +1,7 @@
 #include "tactility/drivers/bluetooth.h"
 
 
+#include <tactility/filesystem/fs.h>
 #include <Tactility/TactilityPrivate.h>
 
 #ifdef ESP_PLATFORM
@@ -25,6 +26,7 @@
 #include <tactility/drivers/power_supply.h>
 #include <tactility/drivers/trackball.h>
 #include <tactility/drivers/uart_controller.h>
+#include <tactility/drivers/vibration.h>
 #include <tactility/filesystem/file_system.h>
 #include <tactility/log.h>
 
@@ -69,8 +71,7 @@ namespace app {
     namespace terminal { extern const ::AppManifest manifest; }
     namespace timedatesettings { extern const ::AppManifest manifest; }
     namespace meshchat {
-        extern const ::AppManifest contactsManifest;
-        extern const ::AppManifest channelsManifest;
+        extern const ::AppManifest manifest;
         extern const ::AppManifest conversationManifest;
         extern const ::AppManifest addContactManifest;
     }
@@ -80,6 +81,7 @@ namespace app {
 #endif
     namespace timezone { extern const ::AppManifest manifest; }
     namespace usbsettings { extern const ::AppManifest manifest; }
+    namespace vibrationsettings { extern const ::AppManifest manifest; }
     namespace kernelsettings { extern const ::AppManifest manifest; }
     namespace btmanage { extern const ::AppManifest manifest; }
     namespace btpeersettings { extern const ::AppManifest manifest; }
@@ -131,6 +133,9 @@ static void registerInternalApps() {
     if (device_exists_of_type(&POWER_SUPPLY_TYPE)) {
         app_manager_add(&app::poweroff::manifest);
     }
+    if (device_exists_of_type(&VIBRATION_TYPE)) {
+        app_manager_add(&app::vibrationsettings::manifest);
+    }
     app_manager_add(&app::qrcode::manifest);
     app_manager_add(&app::selectiondialog::manifest);
     app_manager_add(&app::setup::manifest);
@@ -163,8 +168,7 @@ static void registerInternalApps() {
     }
 
     if (settings::radio::hasRadio()) {
-        app_manager_add(&app::meshchat::contactsManifest);
-        app_manager_add(&app::meshchat::channelsManifest);
+        app_manager_add(&app::meshchat::manifest);
         app_manager_add(&app::meshchat::conversationManifest);
         app_manager_add(&app::meshchat::addContactManifest);
         app_manager_add(&app::meshsettings::manifest);
@@ -214,7 +218,7 @@ static void registerInstalledAppsFromFileSystems() {
         char path[128];
         if (file_system_get_path(fs, path, sizeof(path)) != ERROR_NONE) return true;
         const auto app_path = std::format("{}/tactility/app", path);
-        if (file::isDirectory(app_path)) {
+        if (directory_exists(app_path.c_str())) {
             LOG_I(TAG, "Registering install path %s", app_path.c_str());
             app_manager_install_path_add(app_path.c_str());
         }

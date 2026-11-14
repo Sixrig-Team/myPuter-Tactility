@@ -4,6 +4,7 @@
 #include <tactility/bindings/esp32_ble.h>
 #include <tactility/bindings/esp32_wifi_pinned.h>
 #include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_i2c_master.h>
 #include <tactility/bindings/esp32_spi.h>
 #include <tactility/bindings/esp32_uart.h>
@@ -74,7 +75,9 @@
 			horizontal-resolution = <320>;
 			vertical-resolution = <480>;
 			invert-color;
-			color-conversion-buffer-size = <15360>;
+			ips;
+			mirror-x;
+			color-conversion-buffer-size = <2560>;
 			pixel-clock-hz = <40000000>;
 			pin-dc = <&gpio0 41 GPIO_FLAG_NONE>;
 			backlight = <&display_backlight>;
@@ -116,5 +119,10 @@
 		usbdevicemsc0 {
 			compatible = "espressif,esp32-usbdevice-msc";
 		};
+	};
+
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		status = "disabled";
 	};
 };

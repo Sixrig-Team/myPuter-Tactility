@@ -1,3 +1,4 @@
+#include <Tactility/app/launcher/LauncherMode.h>
 #include <Tactility/lvgl/Lvgl.h>
 
 #include <algorithm>
@@ -166,6 +167,10 @@ static void onLvglStarted() {
     lv_obj_set_style_text_font(lv_layer_top(), text_font, LV_STATE_DEFAULT);
     lvgl_unlock();
 
+    // The launcher shows the icons right away. Icons that are still current are kept.
+    app::launcher::loadPackageIcons(nullptr);
+    app::launcher::loadSettingsIcons(nullptr);
+
     window_manager_configure(windowManagerScreenInit);
     check(module_ensure_started(&lvgl_window_manager_module) == ERROR_NONE);
 
@@ -234,9 +239,11 @@ bool isStarted() {
 
 #define UI_ASSET_IMAGE(name) \
     lv_image_dsc_t { \
-        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RAW }, \
+        .header = { .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RAW, .flags = 0, .w = 0, .h = 0, .stride = 0, .reserved_2 = 0 }, \
         .data_size = asset_ui_##name##_png_SIZE, \
-        .data = asset_ui_##name##_png \
+        .data = asset_ui_##name##_png, \
+        .reserved = nullptr, \
+        .reserved_2 = nullptr \
     }
 
 // Ordered by size, see LVGL_UI_SPINNER_COUNT and LVGL_UI_CURSOR_COUNT

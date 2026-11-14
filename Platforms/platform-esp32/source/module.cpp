@@ -17,23 +17,27 @@
 #include <esp_timer.h>
 #include <esp_vfs.h>
 #include <miniz.h>
+#include <nvs_flash.h>
 #include <sys/errno.h>
 
-#ifdef CONFIG_IDF_TARGET_ESP32P4
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
 #include <esp_cache.h>
 #include <driver/ppa.h>
+// libgcc provides this float-to-int64 helper, but the toolchain headers don't declare it.
+extern "C" long long __fixsfdi(float value);
 #endif
 
+#include <tactility/log.h>
 #include <tactility/module.h>
 
 #include <soc/soc_caps.h>
 
 // GCC soft-float / compiler-rt helpers an app may need but can't reach through a header -
 // reference: https://gcc.gnu.org/onlinedocs/gccint/Soft-float-library-routines.html
-// ESP32P4 (RISC-V, native single-precision FPU) only needs the double-precision + 64-bit-div
-// subset; every other (Xtensa) target needs the full single- and double-precision set.
+// RISC-V targets with a native single-precision FPU (ESP32-P4, ESP32-S31) only need the
+// double-precision + 64-bit-div subset. Xtensa targets need the full single/double set.
 extern "C" {
-#ifndef CONFIG_IDF_TARGET_ESP32P4
+#if !defined(CONFIG_IDF_TARGET_ESP32P4) && !defined(CONFIG_IDF_TARGET_ESP32S31)
     extern float __addsf3(float a, float b);
     extern double __adddf3(double a, double b);
     extern float __subsf3(float a, float b);
@@ -130,16 +134,22 @@ extern "C" {
 #endif
 }
 
-error_t platform_esp32_start_partitions();
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
 error_t esp32_espnow_radio_start();
 #endif
 
-static error_t platform_esp32_start() {
-    error_t error = platform_esp32_start_partitions();
-    if (error != ERROR_NONE) {
-        return error;
+static esp_err_t initNvsFlashSafely() {
+    LOG_I("platform-esp32", "Init NVS");
+    esp_err_t result = nvs_flash_init();
+    if (result == ESP_ERR_NVS_NO_FREE_PAGES || result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        result = nvs_flash_init();
     }
+    return result;
+}
+
+static error_t platform_esp32_start() {
+    ESP_ERROR_CHECK(initNvsFlashSafely());
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) || defined(CONFIG_ESP_HOSTED_ENABLED)
     // Lets mesh networking run over ESP-NOW
     return esp32_espnow_radio_start();
@@ -253,7 +263,7 @@ static const ModuleSymbol platform_esp32_symbols[] = {
     DEFINE_MODULE_SYMBOL(esp_timer_start_periodic),
     DEFINE_MODULE_SYMBOL(esp_timer_start_once),
     DEFINE_MODULE_SYMBOL(esp_timer_get_time),
-#ifdef CONFIG_IDF_TARGET_ESP32P4
+#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(CONFIG_IDF_TARGET_ESP32S31)
     // driver/ppa.h
     DEFINE_MODULE_SYMBOL(ppa_register_client),
     DEFINE_MODULE_SYMBOL(ppa_unregister_client),
@@ -264,7 +274,7 @@ static const ModuleSymbol platform_esp32_symbols[] = {
     // esp_system.h
     DEFINE_MODULE_SYMBOL(esp_restart),
     // soft float
-#ifndef CONFIG_IDF_TARGET_ESP32P4
+#if !defined(CONFIG_IDF_TARGET_ESP32P4) && !defined(CONFIG_IDF_TARGET_ESP32S31)
     DEFINE_MODULE_SYMBOL(__addsf3),
     DEFINE_MODULE_SYMBOL(__adddf3),
     DEFINE_MODULE_SYMBOL(__subsf3),
@@ -325,6 +335,7 @@ static const ModuleSymbol platform_esp32_symbols[] = {
     DEFINE_MODULE_SYMBOL(__truncdfsf2),
     DEFINE_MODULE_SYMBOL(__fixdfsi),
     DEFINE_MODULE_SYMBOL(__fixdfdi),
+    DEFINE_MODULE_SYMBOL(__fixsfdi),
     DEFINE_MODULE_SYMBOL(__fixunsdfsi),
     DEFINE_MODULE_SYMBOL(__fixunssfdi),
     DEFINE_MODULE_SYMBOL(__fixunsdfdi),
@@ -357,6 +368,7 @@ static const ModuleSymbol platform_esp32_symbols[] = {
 };
 
 extern Driver esp32_adc_oneshot_driver;
+extern Driver esp32_flash_fatfs_driver;
 extern Driver esp32_gpio_driver;
 extern Driver esp32_i2c_master_driver;
 extern Driver esp32_i2s_driver;
@@ -388,7 +400,7 @@ extern Driver esp32_usbhost_hid_driver;
 extern Driver esp32_usbhost_hid_keyboard_driver;
 extern Driver esp32_usbhost_midi_driver;
 extern Driver esp32_usbhost_msc_driver;
-#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32S31
 extern Driver usb_uac_codec_driver;
 #endif
 #endif
@@ -410,6 +422,7 @@ extern Driver esp32_usb_cdc_device_driver;
 
 static Driver* const platform_esp32_drivers[] = {
     &esp32_adc_oneshot_driver,
+    &esp32_flash_fatfs_driver,
     &esp32_gpio_driver,
     &esp32_i2c_master_driver,
     &esp32_i2s_driver,
@@ -441,7 +454,7 @@ static Driver* const platform_esp32_drivers[] = {
     &esp32_usbhost_hid_keyboard_driver,
     &esp32_usbhost_midi_driver,
     &esp32_usbhost_msc_driver,
-#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32S31
     &usb_uac_codec_driver,
 #endif
 #endif

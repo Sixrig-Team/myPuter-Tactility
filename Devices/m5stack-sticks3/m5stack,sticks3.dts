@@ -3,6 +3,7 @@
 #include <tactility/bindings/esp32_ble.h>
 #include <tactility/bindings/esp32_wifi_pinned.h>
 #include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_i2c_master.h>
 #include <tactility/bindings/esp32_i2s.h>
 #include <tactility/bindings/esp32_spi.h>
@@ -17,10 +18,17 @@
 
 #include <bindings/st7789.h>
 #include <bindings/button_control.h>
+#include <tactility/bindings/esp32_flash_fatfs.h>
 
 / {
 	compatible = "root";
 	model = "M5Stack StickS3";
+
+	flash_fatfs0 {
+		compatible = "espressif,esp32-flash-fatfs";
+		partition-label = "data";
+		mount-path = "/data";
+	};
 
 	wifi0 {
 		compatible = "espressif,esp32-wifi-pinned";
@@ -140,5 +148,10 @@
 		usbdevicemsc0 {
 			compatible = "espressif,esp32-usbdevice-msc";
 		};
+	};
+
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		status = "disabled";
 	};
 };

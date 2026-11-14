@@ -454,14 +454,14 @@ static error_t rgb_display_get_backlight(Device* device, Device** backlight) {
 }
 
 constexpr uint32_t RGB_DISPLAY_CAPABILITIES = DISPLAY_CAPABILITY_CAP_MIRROR | DISPLAY_CAPABILITY_CAP_SWAP_XY |
-    DISPLAY_CAPABILITY_INVERT_COLOR | DISPLAY_CAPABILITY_ON_OFF | DISPLAY_CAPABILITY_BACKLIGHT;
+    DISPLAY_CAPABILITY_INVERT_COLOR | DISPLAY_CAPABILITY_ON_OFF | DISPLAY_CAPABILITY_BACKLIGHT |
+    DISPLAY_CAPABILITY_PREFER_EXTERNAL_RAM;
 
-// esp_lcd_panel_rgb only applies mirror()/swap_xy()'s rotate_mask when draw_bitmap()'s color_data
-// is copied into the frame buffer by CPU. When frame_buffer_count > 0, LVGL is bound directly onto
-// the panel's own frame buffers (see lvgl_display.c), so color_data always already *is* the frame
-// buffer and that copy - and with it the rotation - never happens. Report those two capabilities as
-// unavailable in that configuration so callers (e.g. lvgl_display.c) don't rely on a rotation that
-// silently does nothing.
+// Mirror and swap-xy are reported unavailable when the panel has frame buffers, because
+// esp_lcd_panel_rgb only applies them when draw_bitmap() copies the data into a frame buffer.
+// A caller that renders straight into a frame buffer would get no rotation. The LVGL bridge reads
+// the missing capabilities as no hardware rotation, so it renders into its own draw buffer and
+// rotates in software.
 static bool rgb_display_has_capability(Device* device, uint32_t capability) {
     auto* internal = static_cast<RgbDisplayInternal*>(device_get_driver_data(device));
     uint32_t capabilities = RGB_DISPLAY_CAPABILITIES;
@@ -498,6 +498,7 @@ static const DisplayApi rgb_display_api = {
     .get_frame_buffer_count = rgb_display_get_frame_buffer_count,
     .get_backlight = rgb_display_get_backlight,
     .has_capability = rgb_display_has_capability,
+    .get_shape = nullptr,
 };
 
 Driver rgb_display_driver = {
@@ -505,6 +506,7 @@ Driver rgb_display_driver = {
     .compatible = (const char*[]) { "espressif,esp32-rgb-display", nullptr },
     .start_device = start,
     .stop_device = stop,
+    .probe = nullptr,
     .api = &rgb_display_api,
     .device_type = &DISPLAY_TYPE,
     .internal = nullptr

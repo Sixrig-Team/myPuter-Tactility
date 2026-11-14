@@ -13,6 +13,7 @@
 #include <lvgl/grid_navigation.h>
 #include <lvgl/insets.h>
 #include <lvgl/ppa.h>
+#include <lvgl/svg.h>
 #include <lvgl/theme.h>
 #include <lvgl/widgets/badge.h>
 #include <lvgl/widgets/card.h>
@@ -119,6 +120,12 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lvgl_theme_is_mono),
     DEFINE_MODULE_SYMBOL(lvgl_theme_get_spacing),
     DEFINE_MODULE_SYMBOL(lvgl_theme_get_size),
+    // lvgl_svg
+    DEFINE_MODULE_SYMBOL(lvgl_svg_rasterize_data),
+    DEFINE_MODULE_SYMBOL(lvgl_svg_rasterize_file),
+    DEFINE_MODULE_SYMBOL(lvgl_svg_rasterize_variants),
+    DEFINE_MODULE_SYMBOL(lvgl_svg_rasterize_file_variants),
+    DEFINE_MODULE_SYMBOL(lvgl_svg_round_corners),
     // lvgl_badge
     DEFINE_MODULE_SYMBOL(lvgl_badge_create),
     // lvgl_focus_container
@@ -213,6 +220,7 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lv_obj_delete_async),
     DEFINE_MODULE_SYMBOL(lv_obj_add_event_cb),
     DEFINE_MODULE_SYMBOL(lv_obj_add_flag),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_send_draw_task_events),
     DEFINE_MODULE_SYMBOL(lv_obj_add_state),
     DEFINE_MODULE_SYMBOL(lv_obj_set_state),
     DEFINE_MODULE_SYMBOL(lv_obj_align),
@@ -364,6 +372,8 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_bg_image_tiled),
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_image_recolor),
     DEFINE_MODULE_SYMBOL(lv_obj_set_style_image_opa),
+    DEFINE_MODULE_SYMBOL(lv_obj_get_style_text_color),
+    DEFINE_MODULE_SYMBOL(lv_obj_set_style_max_width),
     // lv_font
     DEFINE_MODULE_SYMBOL(lv_font_get_bitmap_fmt_txt),
     DEFINE_MODULE_SYMBOL(lv_font_get_default),
@@ -577,6 +587,7 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lv_indev_set_group),
     DEFINE_MODULE_SYMBOL(lv_indev_wait_release),
     DEFINE_MODULE_SYMBOL(lv_indev_enable),
+    DEFINE_MODULE_SYMBOL(lv_indev_get_driver_data),
     // lv_timer
     DEFINE_MODULE_SYMBOL(lv_timer_handler),
     DEFINE_MODULE_SYMBOL(lv_timer_handler_run_in_period),
@@ -640,6 +651,7 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     DEFINE_MODULE_SYMBOL(lv_malloc),
     // lv_draw
     DEFINE_MODULE_SYMBOL(lv_draw_buf_create),
+    DEFINE_MODULE_SYMBOL(lv_draw_buf_destroy),
     DEFINE_MODULE_SYMBOL(lv_draw_fill),
     DEFINE_MODULE_SYMBOL(lv_draw_fill_dsc_init),
     DEFINE_MODULE_SYMBOL(lv_draw_label),
@@ -685,6 +697,9 @@ const struct ModuleSymbol lvgl_module_symbols[] = {
     // lv_area
     DEFINE_MODULE_SYMBOL(lv_area_get_width),
     DEFINE_MODULE_SYMBOL(lv_area_get_height),
+    // lv_trigo
+    DEFINE_MODULE_SYMBOL(lv_trigo_cos),
+    DEFINE_MODULE_SYMBOL(lv_trigo_sin),
     MODULE_SYMBOL_TERMINATOR,
 };
 LV_DEPRECATIONS_IGNORE_END

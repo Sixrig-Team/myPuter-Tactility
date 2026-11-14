@@ -37,6 +37,7 @@
 #include <tactility/drivers/sdcard.h>
 #include <tactility/drivers/sleep_controller.h>
 #include <tactility/drivers/spi_controller.h>
+#include <tactility/drivers/vibration.h>
 #include <tactility/drivers/mouse.h>
 #include <tactility/drivers/touch.h>
 #include <tactility/drivers/trackball.h>
@@ -52,7 +53,10 @@
 #include <tactility/drivers/wifi.h>
 #include <tactility/error.h>
 #include <tactility/file_ops.h>
+#include <tactility/filesystem/file.h>
 #include <tactility/filesystem/file_system.h>
+#include <tactility/filesystem/directory.h>
+#include <tactility/filesystem/path.h>
 #include <tactility/memory.h>
 #include <tactility/network.h>
 #include <tactility/module.h>
@@ -164,6 +168,7 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(backlight_get_max_brightness),
     DEFINE_MODULE_SYMBOL(BACKLIGHT_TYPE),
     // drivers/display
+    DEFINE_MODULE_SYMBOL(display_set_hook),
     DEFINE_MODULE_SYMBOL(display_has_capability),
     DEFINE_MODULE_SYMBOL(display_reset),
     DEFINE_MODULE_SYMBOL(display_init),
@@ -187,19 +192,37 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(display_get_backlight),
     DEFINE_MODULE_SYMBOL(display_get_shape),
     DEFINE_MODULE_SYMBOL(DISPLAY_TYPE),
-    // file system
+    // filesystem/fs.h
     DEFINE_MODULE_SYMBOL(file_system_mount),
     DEFINE_MODULE_SYMBOL(file_system_unmount),
     DEFINE_MODULE_SYMBOL(file_system_is_mounted),
     DEFINE_MODULE_SYMBOL(file_system_get_path),
     DEFINE_MODULE_SYMBOL(file_system_for_each),
     DEFINE_MODULE_SYMBOL(file_system_for_each_mounted),
+    // filesystem/file.h
+    DEFINE_MODULE_SYMBOL(file_exists),
+    DEFINE_MODULE_SYMBOL(file_read_binary),
+    DEFINE_MODULE_SYMBOL(file_remove),
+    DEFINE_MODULE_SYMBOL(file_copy),
+    DEFINE_MODULE_SYMBOL(file_move),
+    DEFINE_MODULE_SYMBOL(file_touch),
+    // filesystem/directory.h
+    DEFINE_MODULE_SYMBOL(directory_list),
+    DEFINE_MODULE_SYMBOL(directory_make),
+    DEFINE_MODULE_SYMBOL(directory_remove),
+    DEFINE_MODULE_SYMBOL(directory_remove_tree),
+    // filesystem/path.h
+    DEFINE_MODULE_SYMBOL(path_exists),
+    DEFINE_MODULE_SYMBOL(path_tree_size),
     // memory
     DEFINE_MODULE_SYMBOL(MEMORY_POLICY_DEFAULT),
     DEFINE_MODULE_SYMBOL(memory_log_stats),
     DEFINE_MODULE_SYMBOL(memory_alloc_with_policy),
     DEFINE_MODULE_SYMBOL(memory_realloc_with_policy),
     DEFINE_MODULE_SYMBOL(memory_calloc_with_policy),
+    DEFINE_MODULE_SYMBOL(memory_alloc),
+    DEFINE_MODULE_SYMBOL(memory_calloc),
+    DEFINE_MODULE_SYMBOL(memory_realloc),
     DEFINE_MODULE_SYMBOL(memory_free),
     DEFINE_MODULE_SYMBOL(memory_heap_free),
     DEFINE_MODULE_SYMBOL(memory_heap_total),
@@ -267,6 +290,10 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     DEFINE_MODULE_SYMBOL(compass_read_field),
     DEFINE_MODULE_SYMBOL(compass_read_heading),
     DEFINE_MODULE_SYMBOL(COMPASS_TYPE),
+    // drivers/vibration
+    DEFINE_MODULE_SYMBOL(vibration_set_strength),
+    DEFINE_MODULE_SYMBOL(vibration_pulse),
+    DEFINE_MODULE_SYMBOL(VIBRATION_TYPE),
     // drivers/imu
     DEFINE_MODULE_SYMBOL(imu_read_accel),
     DEFINE_MODULE_SYMBOL(imu_read_gyro),
@@ -337,6 +364,7 @@ const struct ModuleSymbol KERNEL_SYMBOLS[] = {
     // drivers/rtc
     DEFINE_MODULE_SYMBOL(rtc_get_time),
     DEFINE_MODULE_SYMBOL(rtc_set_time),
+    DEFINE_MODULE_SYMBOL(rtc_datetime_is_valid),
     DEFINE_MODULE_SYMBOL(RTC_TYPE),
     // drivers/sdcard
     DEFINE_MODULE_SYMBOL(SDCARD_TYPE),

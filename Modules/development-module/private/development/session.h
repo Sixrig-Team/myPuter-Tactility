@@ -13,6 +13,8 @@
 #include <stdint.h>
 
 #define DEVELOPMENT_SESSION_APP_ID "development-session"
+/** Remote sessions touch no files, so their task can have its stack in external RAM */
+#define DEVELOPMENT_REMOTE_SESSION_APP_ID "development-remote-session"
 
 /** Shell sessions are limited to 1, as each one also runs a shell app */
 #define DEVELOPMENT_SERVER_MAX_SESSIONS 3
@@ -34,6 +36,8 @@ struct DevelopmentSession {
 
 extern "C" const struct AppManifest development_session_app_manifest;
 
+extern "C" const struct AppManifest development_remote_session_app_manifest;
+
 extern "C" const struct ServiceManifest development_server_service_manifest;
 
 /** @return a session that wraps @a socket, or NULL when out of memory */
@@ -46,6 +50,9 @@ void development_session_free(DevelopmentSession* session);
 bool development_session_write(DevelopmentSession* session, const void* data, size_t length, uint32_t timeout_ms);
 
 bool development_session_send_status(DevelopmentSession* session, const char* status, const char* message);
+
+/** Sends the "accepted" line of an "info" hello, with the device information */
+bool development_session_send_info(DevelopmentSession* session, const char* vendor, const char* name, const char* id, const char* version);
 
 bool development_session_send_frame(DevelopmentSession* session, DevelopmentFrameType type, const void* payload, uint16_t length);
 

@@ -4,6 +4,7 @@
 #include <tactility/bindings/esp32_ble.h>
 #include <tactility/bindings/esp32_wifi_pinned.h>
 #include <tactility/bindings/esp32_gpio.h>
+#include <tactility/bindings/esp32_usbhost.h>
 #include <tactility/bindings/esp32_i2c_master.h>
 #include <tactility/bindings/esp32_spi.h>
 #include <bindings/qmi8658.h>
@@ -12,11 +13,18 @@
 #include <tactility/bindings/pwm_backlight.h>
 #include <bindings/cst816t.h>
 #include <bindings/gc9a01.h>
+#include <tactility/bindings/esp32_flash_fatfs.h>
 
 // Reference: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28
 / {
 	compatible = "root";
 	model = "Waveshare S3 Touch LCD 1.28";
+
+	flash_fatfs0 {
+		compatible = "espressif,esp32-flash-fatfs";
+		partition-label = "data";
+		mount-path = "/data";
+	};
 
 	wifi0 {
 		compatible = "espressif,esp32-wifi-pinned";
@@ -94,5 +102,10 @@
 			pin-reset = <&gpio0 14 GPIO_FLAG_NONE>;
 			backlight = <&display_backlight>;
 		};
+	};
+
+	usbhost0 {
+		compatible = "espressif,esp32-usbhost";
+		status = "disabled";
 	};
 };

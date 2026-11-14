@@ -51,7 +51,9 @@ if (DEFINED ENV{ESP_IDF_VERSION})
         "Libraries/minitar"
         "Libraries/ed25519"
         "Libraries/minmea"
+        "Libraries/nanosvg"
         "Libraries/QRCode"
+        "Libraries/esp32-audio-codec"
     )
 
     set(EXCLUDE_COMPONENTS "Simulator")
@@ -130,7 +132,7 @@ else ()
     add_compile_definitions(CONFIG_TT_DEVICE_VENDOR="")
     add_compile_definitions(CONFIG_TT_DEVICE_NAME_SIMPLE="Simulator")
     add_compile_definitions(CONFIG_TT_AUTO_START_APP_ID="")
-    add_compile_definitions(CONFIG_TT_USER_DATA_LOCATION_INTERNAL)
+    add_compile_definitions(CONFIG_TT_ROOT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/Data/data")
 
 endif ()
 
@@ -164,6 +166,7 @@ if (NOT DEFINED ENV{ESP_IDF_VERSION})
     add_subdirectory(Libraries/minitar)
     add_subdirectory(Libraries/ed25519)
     add_subdirectory(Libraries/minmea)
+    add_subdirectory(Libraries/nanosvg)
     add_subdirectory(Modules/lvgl-module)
     add_subdirectory(Modules/audio-decoder-module)
     add_subdirectory(Modules/binfont-module)
