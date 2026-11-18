@@ -1,6 +1,8 @@
 .idea/
 
-build*/
+buildsim/
+**/build/
+**/build-*/
 !.github/actions/build*/
 cmake*/
 CMakeCache.txt
@@ -32,3 +34,5 @@ sdkconfig.board.*.dev
 __pycache__
 .DS_Store
 .cache
+.ccache/
+.ccache-stats.txt

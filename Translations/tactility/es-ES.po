@@ -1,0 +1,91 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: es-ES\n"
+
+msgid "Approximate"
+msgstr "Aproximada"
+
+msgid "Auto-connect"
+msgstr "Conexión automática"
+
+msgid "Brightness"
+msgstr "Brillo"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Close"
+msgstr "Cerrar"
+
+msgid "Confirmation"
+msgstr "Confirmación"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "Custom"
+msgstr "Personalizado"
+
+msgid "Disabled"
+msgstr "Desactivado"
+
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgid "Enabled"
+msgstr "Activado"
+
+msgid "Error"
+msgstr "Error"
+
+msgid "File not found"
+msgstr "Archivo no encontrado"
+
+msgid "Forget"
+msgstr "Olvidar"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Loading..."
+msgstr "Cargando..."
+
+msgid "Mesh"
+msgstr "Mesh"
+
+msgid "Mode"
+msgstr "Modo"
+
+msgid "Never"
+msgstr "Nunca"
+
+msgid "No"
+msgstr "No"
+
+msgid "No networks found."
+msgstr "No se encontraron redes."
+
+msgid "None"
+msgstr "Ninguno"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Open"
+msgstr "Abrir"
+
+msgid "Precise"
+msgstr "Precisa"
+
+msgid "Retry"
+msgstr "Reintentar"
+
+msgid "Select"
+msgstr "Elegir"
+
+msgid "Timeout"
+msgstr "Tiempo de espera"
+
+msgid "Yes"
+msgstr "Sí"

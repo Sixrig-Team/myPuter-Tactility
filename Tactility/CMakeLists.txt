@@ -41,6 +41,7 @@ list(APPEND REQUIRES_LIST
     gps-module
     graphics-module
     http-module
+    localisation-module
     location-module
     mbedtls-module
     mesh-module
@@ -197,9 +198,9 @@ if (DEFINED ENV{ESP_IDF_VERSION})
     if (NOT DEFINED TACTILITY_SKIP_SPIFFS)
         # Read-write (only when user data lives on the internal flash partition)
         if (CONFIG_TT_ROOT_PATH STREQUAL "/data")
-            # The folder is not in the repository
-            file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../Data/data")
-            fatfs_create_spiflash_image(data "${CMAKE_CURRENT_SOURCE_DIR}/../Data/data" FLASH_IN_PROJECT PRESERVE_TIME)
+            # The partition starts empty. Data/data is the folder of the simulator and must not end up in the image.
+            file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/data_image")
+            fatfs_create_spiflash_image(data "${CMAKE_BINARY_DIR}/data_image" FLASH_IN_PROJECT PRESERVE_TIME)
         endif ()
     endif ()
 else ()
@@ -260,6 +261,32 @@ set_source_files_properties("${GENERATED_DIR}/generated_assets.c" PROPERTIES GEN
 set_source_files_properties("${GENERATED_DIR}/generated_assets.h" PROPERTIES GENERATED TRUE)
 target_sources(${COMPONENT_LIB} PRIVATE "${GENERATED_DIR}/generated_assets.c")
 add_dependencies(${COMPONENT_LIB} GeneratedAssets)
+
+#
+# Translations: the PO files of Translations/<domain> compiled to catalogs and embedded as C byte arrays
+#
+
+set(CATALOG_GENERATOR "${CMAKE_SOURCE_DIR}/Buildscripts/l10n/generate-catalogs.py")
+# Devices without CONFIG_TT_LANGUAGE_SELECTION only have English, so no catalogs are embedded
+set(CATALOG_ARGUMENTS "")
+if (DEFINED ENV{ESP_IDF_VERSION})
+    if (NOT CONFIG_TT_LANGUAGE_SELECTION)
+        set(CATALOG_ARGUMENTS "--english-only")
+    endif ()
+elseif (NOT TT_SIM_LANGUAGE_SELECTION)
+    set(CATALOG_ARGUMENTS "--english-only")
+endif ()
+# Runs on every build, so removing or adding a PO file is noticed. It rewrites its outputs only when the content changes.
+add_custom_target(GeneratedCatalogs ALL
+    COMMAND python "${CATALOG_GENERATOR}" ${CATALOG_ARGUMENTS} "${CMAKE_SOURCE_DIR}/Translations" "${GENERATED_DIR}"
+    BYPRODUCTS "${GENERATED_DIR}/generated_catalogs.c" "${GENERATED_DIR}/generated_catalogs.h"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Generating translation catalogs..."
+)
+set_source_files_properties("${GENERATED_DIR}/generated_catalogs.c" PROPERTIES GENERATED TRUE)
+set_source_files_properties("${GENERATED_DIR}/generated_catalogs.h" PROPERTIES GENERATED TRUE)
+target_sources(${COMPONENT_LIB} PRIVATE "${GENERATED_DIR}/generated_catalogs.c")
+add_dependencies(${COMPONENT_LIB} GeneratedCatalogs)
 
 #
 # Fonts: the binfont files of the device's default font size, embedded as C byte arrays

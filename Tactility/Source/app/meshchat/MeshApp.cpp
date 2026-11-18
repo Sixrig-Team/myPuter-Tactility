@@ -1,3 +1,5 @@
+#define L10N_APP "mesh"
+#include <Tactility/i18n/AppDomain.h>
 #include <Tactility/app/alertdialog/AlertDialog.h>
 #include <Tactility/app/inputdialog/InputDialog.h>
 #include <Tactility/app/meshchat/MeshChatCommon.h>
@@ -13,6 +15,9 @@
 
 #include <lvgl_window_manager/window_manager.h>
 
+#include <tactility/Memory.hpp>
+#include <tactility/std/deque.hpp>
+#include <tactility/std/string.hpp>
 #include <tactility/std/vector.hpp>
 
 #include <mesh/mesh.h>
@@ -28,6 +33,7 @@
 #include <lvgl/widgets/toolbar.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -42,8 +48,9 @@ namespace {
 constexpr auto* TAG = "Mesh";
 constexpr size_t CHANNEL_LIMIT = 8;
 constexpr size_t CONTACT_LIMIT = 64;
+constexpr size_t INSPECT_LINE_LIMIT = 100;
 
-enum class ViewMode { Menu, Contacts, Channels };
+enum class ViewMode { Menu, Contacts, Channels, Inspect };
 
 struct Context {
     uint32_t appInstanceId;
@@ -54,6 +61,7 @@ struct Context {
     uint32_t addChannelBit = 0;
     uint32_t showChannelsBit = 0;
     uint32_t showContactsBit = 0;
+    uint32_t showInspectBit = 0;
     ViewMode mode = ViewMode::Menu;
     /** Written by the LVGL thread before it signals openBit */
     ::std::atomic<int32_t> openIndex = 0;
@@ -88,6 +96,8 @@ struct Context {
     ::std::string pendingContactName;
     tt::std::vector<MeshChannel> channels;
     tt::std::vector<MeshContact> contacts;
+    /** The events since the app started, oldest first. Changed with the LVGL lock held. */
+    tt::std::deque<tt::std::string> inspectLines;
     // Valid while the window is shown
     lv_obj_t* root = nullptr;
     lv_obj_t* networkHeader = nullptr;
@@ -155,6 +165,7 @@ void onMenuPressed(lv_event_t* event) { signalBit(event, &Context::menuBit); }
 void onSettingsPressed(lv_event_t* event) { signalBit(event, &Context::settingsBit); }
 void onShowChannelsPressed(lv_event_t* event) { signalBit(event, &Context::showChannelsBit); }
 void onShowContactsPressed(lv_event_t* event) { signalBit(event, &Context::showContactsBit); }
+void onShowInspectPressed(lv_event_t* event) { signalBit(event, &Context::showInspectBit); }
 
 void onBackPressed(lv_event_t* event) {
     auto* ctx = static_cast<Context*>(lv_event_get_user_data(event));
@@ -162,16 +173,39 @@ void onBackPressed(lv_event_t* event) {
 }
 
 /** Requires the LVGL lock */
+lv_obj_t* addInspectLabel(Context* ctx, const tt::std::string& line) {
+    auto* label = lv_label_create(ctx->content);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_font(label, lvgl_get_text_font(FONT_SIZE_SMALL), LV_STATE_DEFAULT);
+    lv_label_set_text(label, line.c_str());
+    return label;
+}
+
+/** Requires the LVGL lock */
+void scrollInspectToNewest(Context* ctx) {
+    lv_obj_update_layout(ctx->content);
+    lv_obj_scroll_to_y(ctx->content, LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+/** Requires the LVGL lock */
 void updateWidgets(Context* ctx) {
     if (ctx->content == nullptr) {
         return;
     }
+    updateNetworkHeader(ctx->networkHeader, ctx->network);
     if (ctx->mode == ViewMode::Menu) {
         return;
     }
-    updateNetworkHeader(ctx->networkHeader, ctx->network);
 
     lv_obj_clean(ctx->content);
+    if (ctx->mode == ViewMode::Inspect) {
+        for (const auto& line : ctx->inspectLines) {
+            addInspectLabel(ctx, line);
+        }
+        scrollInspectToNewest(ctx);
+        return;
+    }
     auto* list = createCard(ctx->content);
     if (ctx->mode == ViewMode::Channels) {
         lv_obj_set_hidden(ctx->addButton, !ctx->canAddChannel);
@@ -183,7 +217,7 @@ void updateWidgets(Context* ctx) {
             addListButton(list, ctx->contacts[i].name, onItemPressed, ctx, (intptr_t)i);
         }
         if (ctx->contacts.empty()) {
-            lvgl_list_add_text(list, "No contacts yet. Add a node that you've heard, or wait for a direct message.");
+            lvgl_list_add_text(list, tr("No contacts yet. Add a node that you've heard, or wait for a direct message."));
         }
     }
     lvgl_list_hide_last_divider(list);
@@ -196,24 +230,29 @@ void createWidgets(lv_obj_t* parent, void* userData) {
     lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(parent, 0, LV_STATE_DEFAULT);
 
-    const char* title = ctx->mode == ViewMode::Channels ? "Channels" : ctx->mode == ViewMode::Contacts ? "Contacts" : "Mesh";
+    const char* title = ctx->mode == ViewMode::Channels ? tr("Channels") : ctx->mode == ViewMode::Contacts ? tr("Contacts") : ctx->mode == ViewMode::Inspect ? tr("Inspect") : tr("Mesh");
     auto* toolbar = lvgl_toolbar_create(parent, title);
     lvgl_toolbar_set_nav_action(toolbar, ctx->mode == ViewMode::Menu ? LV_SYMBOL_CLOSE : LV_SYMBOL_LEFT, onBackPressed, ctx);
 
     if (ctx->mode == ViewMode::Menu) {
         lvgl_toolbar_add_text_button_action(toolbar, LV_SYMBOL_SETTINGS, onSettingsPressed, ctx);
+        auto* overflowButton = lvgl_toolbar_add_text_button_action(toolbar, LVGL_ICON_SHARED_MORE_VERT, onMenuPressed, ctx);
+        lv_obj_set_style_text_font(overflowButton, lvgl_get_shared_icon_default_font(), LV_STATE_DEFAULT);
+        ctx->networkHeader = createNetworkHeader(parent);
+        updateNetworkHeader(ctx->networkHeader, ctx->network);
         auto* menuContent = createContent(parent);
         ctx->content = menuContent;
         auto* list = createCard(menuContent);
-        addListButton(list, "Channels", onShowChannelsPressed, ctx, 0);
-        addListButton(list, "Contacts", onShowContactsPressed, ctx, 0);
+        addListButton(list, tr("Channels"), onShowChannelsPressed, ctx, 0);
+        addListButton(list, tr("Contacts"), onShowContactsPressed, ctx, 0);
+        addListButton(list, tr("Inspect"), onShowInspectPressed, ctx, 0);
         lvgl_list_hide_last_divider(list);
         return;
     }
 
     if (ctx->mode == ViewMode::Channels) {
         ctx->addButton = lvgl_toolbar_add_text_button_action(toolbar, LV_SYMBOL_PLUS, onAddChannelPressed, ctx);
-    } else {
+    } else if (ctx->mode == ViewMode::Contacts) {
         auto* menuButton = lvgl_toolbar_add_text_button_action(toolbar, LVGL_ICON_SHARED_MORE_VERT, onMenuPressed, ctx);
         lv_obj_set_style_text_font(menuButton, lvgl_get_shared_icon_default_font(), LV_STATE_DEFAULT);
     }
@@ -252,6 +291,95 @@ void setMode(Context* ctx, ViewMode mode) {
     lvgl_unlock();
 }
 
+::std::string formatSignal(float rssi, float snr) {
+    char text[40];
+    if (::std::isnan(snr)) {
+        snprintf(text, sizeof(text), "%.0f dBm", rssi);
+    } else {
+        snprintf(text, sizeof(text), "%.0f dBm, %.1f dB", rssi, snr);
+    }
+    return text;
+}
+
+const char* getDeliveryName(MeshDeliveryState delivery) {
+    switch (delivery) {
+        case MESH_DELIVERY_QUEUED: return "queued";
+        case MESH_DELIVERY_BLOCKED: return "blocked";
+        case MESH_DELIVERY_SENT: return "sent";
+        case MESH_DELIVERY_RETRYING: return "retrying";
+        case MESH_DELIVERY_REPEATED: return "repeated";
+        case MESH_DELIVERY_DELIVERED: return "delivered";
+        case MESH_DELIVERY_FAILED: return "failed";
+        case MESH_DELIVERY_CANCELLED: return "cancelled";
+        default: return "";
+    }
+}
+
+/** Queries the service, so it's called without the LVGL lock */
+::std::string formatMessage(const Context* ctx, uint32_t seq) {
+    auto* message = tt::newObject<MeshMessage>();
+    if (message == nullptr) {
+        return "";
+    }
+    ::std::string line;
+    if (mesh_message_get(seq, message) == ERROR_NONE) {
+        ::std::string target = addressToHex(message->peer).substr(0, 8);
+        if (message->peer.length == 0) {
+            target = "channel " + ::std::to_string(message->channel);
+            for (const auto& channel : ctx->channels) {
+                if (channel.index == message->channel) {
+                    target = channel.name;
+                }
+            }
+        }
+        if (message->outgoing) {
+            line = "> " + target + ": " + message->text;
+        } else {
+            line = ::std::string("< ") + (message->sender_name[0] != '\0' ? message->sender_name : "?") + " (" + target + ", " +
+                formatSignal(message->rssi, message->snr) + "): " + message->text;
+        }
+    }
+    tt::deleteObject(message);
+    return line;
+}
+
+/** Frames that couldn't be read are encrypted for a key that this node doesn't have */
+::std::string formatEvent(const Context* ctx, const MeshEvent& event) {
+    switch (event.type) {
+        case MESH_EVENT_MESSAGE:
+            return formatMessage(ctx, event.seq);
+        case MESH_EVENT_FRAME:
+            if (event.frame.kind == MESH_FRAME_ADVERT) {
+                return "< advert " + addressToHex(event.frame.from).substr(0, 8) + " (" + formatSignal(event.frame.rssi, event.frame.snr) + "): " +
+                    (event.frame.name[0] != '\0' ? event.frame.name : "[no name]");
+            }
+            return "< (" + formatSignal(event.frame.rssi, event.frame.snr) + "): [encrypted: " + ::std::to_string(event.frame.length) + " bytes]";
+        case MESH_EVENT_DELIVERY:
+            return "#" + ::std::to_string(event.seq) + " " + getDeliveryName(event.delivery);
+        case MESH_EVENT_STATE:
+            return ::std::string("state: ") + mesh_state_to_string(event.state);
+        default:
+            return "";
+    }
+}
+
+void addInspectLine(Context* ctx, ::std::string&& line) {
+    lvgl_lock();
+    ctx->inspectLines.push_back(tt::std::string(line.c_str()));
+    const bool trimmed = ctx->inspectLines.size() > INSPECT_LINE_LIMIT;
+    if (trimmed) {
+        ctx->inspectLines.pop_front();
+    }
+    if (ctx->mode == ViewMode::Inspect && ctx->content != nullptr) {
+        if (trimmed) {
+            lv_obj_delete(lv_obj_get_child(ctx->content, 0));
+        }
+        addInspectLabel(ctx, ctx->inspectLines.back());
+        scrollInspectToNewest(ctx);
+    }
+    lvgl_unlock();
+}
+
 void startConversation(Context* ctx) {
     const auto index = (size_t)ctx->openIndex.load();
     if (ctx->mode == ViewMode::Channels && index < ctx->channels.size()) {
@@ -282,18 +410,18 @@ void startAddChannel(Context* ctx) {
     ::std::vector<::std::string> items;
     if (mesh_supports(MESH_FEATURE_NAMED_CHANNELS)) {
         ctx->addTypes.push_back(static_cast<int>(AddType::JoinPublic));
-        items.emplace_back("Join public channel");
+        items.emplace_back(tr("Join public channel"));
     }
     if (mesh_supports(MESH_FEATURE_KEYED_CHANNELS)) {
         ctx->addTypes.push_back(static_cast<int>(AddType::JoinPrivate));
-        items.emplace_back("Join private channel");
+        items.emplace_back(tr("Join private channel"));
         ctx->addTypes.push_back(static_cast<int>(AddType::CreatePrivate));
-        items.emplace_back("Create private channel");
+        items.emplace_back(tr("Create private channel"));
     }
     if (items.empty()) {
         return;
     }
-    ctx->addTypeDialogId = selectiondialog::start(ctx->appInstanceId, "Add channel", items);
+    ctx->addTypeDialogId = selectiondialog::start(ctx->appInstanceId, tr("Add channel"), items);
 }
 
 void startJoinChannel(Context* ctx);
@@ -323,8 +451,8 @@ void startJoinChannel(Context* ctx) {
     }
     ctx->joinChannelDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Join channel",
-        "Hashtag channel name, e.g. #test. To join Public, delete the # first.",
+        tr("Join channel"),
+        tr("Hashtag channel name, e.g. #test. To join Public, delete the # first."),
         "#",
         ctx->channelStream,
         ctx->channelBuffer,
@@ -340,10 +468,10 @@ void onJoinChannelResult(Context* ctx, int32_t result) {
         name[length] = '\0';
         const error_t error = meshsettings::joinHashtagChannel(name);
         if (error == ERROR_INVALID_ARGUMENT) {
-            showMessage(ctx, "Couldn't join channel", "Use a channel name that starts with # or Public. This mesh network can't join a channel by name.");
+            showMessage(ctx, tr("Couldn't join channel"), tr("Use a channel name that starts with # or Public. This mesh network can't join a channel by name."));
         } else if (error != ERROR_NONE) {
             LOG_E(TAG, "Failed to join channel %s: %s", name, error_to_string(error));
-            showMessage(ctx, "Couldn't join channel", error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
+            showMessage(ctx, tr("Couldn't join channel"), error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
         }
     }
     app_stream_unsubscribe(&ctx->channelStream);
@@ -355,8 +483,8 @@ void startCreateChannel(Context* ctx) {
     }
     ctx->createChannelDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Create private channel",
-        "Name of the channel",
+        tr("Create private channel"),
+        tr("Name of the channel"),
         "",
         ctx->createStream,
         ctx->createBuffer,
@@ -372,10 +500,10 @@ void onCreateChannelResult(Context* ctx, int32_t result) {
         name[length] = '\0';
         const error_t error = meshsettings::createPrivateChannel(name);
         if (error == ERROR_INVALID_ARGUMENT) {
-            showMessage(ctx, "Couldn't create channel", "Enter a name for the channel.");
+            showMessage(ctx, tr("Couldn't create channel"), tr("Enter a name for the channel."));
         } else if (error != ERROR_NONE) {
             LOG_E(TAG, "Failed to create channel %s: %s", name, error_to_string(error));
-            showMessage(ctx, "Couldn't create channel", error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
+            showMessage(ctx, tr("Couldn't create channel"), error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
         }
     }
     app_stream_unsubscribe(&ctx->createStream);
@@ -387,8 +515,8 @@ void startJoinPrivateChannel(Context* ctx) {
     }
     ctx->privateNameDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Join private channel",
-        "Name of the channel",
+        tr("Join private channel"),
+        tr("Name of the channel"),
         "",
         ctx->privateNameStream,
         ctx->privateNameBuffer,
@@ -411,8 +539,8 @@ void onPrivateNameResult(Context* ctx, int32_t result) {
     }
     ctx->privateKeyDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Channel key",
-        "Key of the channel in hexadecimal",
+        tr("Channel key"),
+        tr("Key of the channel in hexadecimal"),
         "",
         ctx->privateKeyStream,
         ctx->privateKeyBuffer,
@@ -428,14 +556,14 @@ void onPrivateKeyResult(Context* ctx, int32_t result) {
         key[length] = '\0';
         MeshAddress bytes;
         if (!hexToAddress(key, &bytes)) {
-            showMessage(ctx, "Invalid key", "Enter the key as hexadecimal characters, two for every byte.");
+            showMessage(ctx, tr("Invalid key"), tr("Enter the key as hexadecimal characters, two for every byte."));
         } else {
             const error_t error = meshsettings::joinPrivateChannel(ctx->pendingChannelName.c_str(), bytes.bytes, bytes.length);
             if (error == ERROR_INVALID_ARGUMENT) {
-                showMessage(ctx, "Invalid key", "This mesh network expects a key of a different length.");
+                showMessage(ctx, tr("Invalid key"), tr("This mesh network expects a key of a different length."));
             } else if (error != ERROR_NONE) {
                 LOG_E(TAG, "Failed to join channel %s: %s", ctx->pendingChannelName.c_str(), error_to_string(error));
-                showMessage(ctx, "Couldn't join channel", error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
+                showMessage(ctx, tr("Couldn't join channel"), error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
             }
         }
     }
@@ -454,10 +582,10 @@ void showOwnQr(Context* ctx) {
     if (error == ERROR_NONE) {
         qrcode::start(uri);
     } else if (error == ERROR_NOT_SUPPORTED) {
-        showMessage(ctx, "Not available", "This mesh network can't share a contact as a QR code.");
+        showMessage(ctx, tr("Not available"), tr("This mesh network can't share a contact as a QR code."));
     } else {
         LOG_E(TAG, "Failed to get the contact: %s", error_to_string(error));
-        showMessage(ctx, "Couldn't create QR code", error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
+        showMessage(ctx, tr("Couldn't create QR code"), error == ERROR_INVALID_STATE ? getNotReadyText().c_str() : error_to_string(error));
     }
 }
 
@@ -467,8 +595,8 @@ void startContactNameDialog(Context* ctx) {
     }
     ctx->contactNameDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Add contact",
-        "Name of the contact",
+        tr("Add contact"),
+        tr("Name of the contact"),
         "",
         ctx->contactNameStream,
         ctx->contactNameBuffer,
@@ -491,8 +619,8 @@ void onContactNameResult(Context* ctx, int32_t result) {
     }
     ctx->contactKeyDialogId = inputdialog::start(
         ctx->appInstanceId,
-        "Public key",
-        "Public key of the contact in hexadecimal",
+        tr("Public key"),
+        tr("Public key of the contact in hexadecimal"),
         "",
         ctx->contactKeyStream,
         ctx->contactKeyBuffer,
@@ -508,14 +636,14 @@ void onContactKeyResult(Context* ctx, int32_t result) {
         key[length] = '\0';
         MeshAddress address;
         if (!hexToAddress(key, &address)) {
-            showMessage(ctx, "Invalid key", "Enter the public key as hexadecimal characters, two for every byte.");
+            showMessage(ctx, tr("Invalid key"), tr("Enter the public key as hexadecimal characters, two for every byte."));
         } else {
             const error_t error = mesh_add_contact(&address, ctx->pendingContactName.c_str());
             if (error == ERROR_INVALID_ARGUMENT) {
-                showMessage(ctx, "Invalid key", "This mesh network expects a public key of a different length.");
+                showMessage(ctx, tr("Invalid key"), tr("This mesh network expects a public key of a different length."));
             } else if (error != ERROR_NONE) {
                 LOG_E(TAG, "Failed to add contact: %s", error_to_string(error));
-                showMessage(ctx, "Couldn't add contact", error == ERROR_RESOURCE ? "There are too many contacts." : error_to_string(error));
+                showMessage(ctx, tr("Couldn't add contact"), error == ERROR_RESOURCE ? tr("There are too many contacts.") : error_to_string(error));
             }
         }
     }
@@ -525,19 +653,45 @@ void onContactKeyResult(Context* ctx, int32_t result) {
 
 /** The order of these matches the options of the selection dialog */
 enum class MenuItem { AddByKey, AddSeen, ShowQr };
+enum class MainMenuItem { AdvertZeroHop, AdvertFlood, ShowQr };
 
 void startMenu(Context* ctx) {
     if (ctx->menuDialogId != 0) {
         return;
     }
-    ctx->menuDialogId = selectiondialog::start(ctx->appInstanceId, "Mesh Contacts", {
-        "Add by key",
-        "Add seen",
-        "Show my QR"
+    if (ctx->mode == ViewMode::Menu) {
+        ctx->menuDialogId = selectiondialog::start(ctx->appInstanceId, tr("Mesh"), {
+            tr("Advert: Zero hop"),
+            tr("Advert: Flood routed"),
+            tr("Show QR")
+        });
+        return;
+    }
+    ctx->menuDialogId = selectiondialog::start(ctx->appInstanceId, tr("Mesh Contacts"), {
+        tr("Add by key"),
+        tr("Add seen"),
+        tr("Show my QR")
     });
 }
 
+void onMainMenuSelected(Context* ctx, int32_t selected) {
+    if (static_cast<MainMenuItem>(selected) == MainMenuItem::ShowQr) {
+        showOwnQr(ctx);
+        return;
+    }
+    const auto route = static_cast<MainMenuItem>(selected) == MainMenuItem::AdvertZeroHop ? MESH_ADVERT_ZERO_HOP : MESH_ADVERT_FLOOD;
+    const error_t error = mesh_send_advert(route);
+    if (error != ERROR_NONE && ctx->messageDialogId == 0) {
+        const char* reason = error == ERROR_INVALID_STATE ? tr("Turn mesh on to send an advert") : (error == ERROR_NOT_SUPPORTED ? tr("This mesh network has no adverts.") : error_to_string(error));
+        ctx->messageDialogId = alertdialog::start(ctx->appInstanceId, tr("Couldn't send advert"), reason);
+    }
+}
+
 void onMenuSelected(Context* ctx, int32_t selected) {
+    if (ctx->mode == ViewMode::Menu) {
+        onMainMenuSelected(ctx, selected);
+        return;
+    }
     switch (static_cast<MenuItem>(selected)) {
         case MenuItem::AddByKey:
             startContactNameDialog(ctx);
@@ -564,6 +718,7 @@ int32_t appMain(int argc, char* argv[]) {
     check(task_event_group_claim_bit(&eventGroup, &ctx.addChannelBit) == ERROR_NONE);
     check(task_event_group_claim_bit(&eventGroup, &ctx.showChannelsBit) == ERROR_NONE);
     check(task_event_group_claim_bit(&eventGroup, &ctx.showContactsBit) == ERROR_NONE);
+    check(task_event_group_claim_bit(&eventGroup, &ctx.showInspectBit) == ERROR_NONE);
 
     AppEventSubscription appEvents {};
     check(app_event_subscribe(&appEvents, &eventGroup) == ERROR_NONE);
@@ -601,11 +756,18 @@ int32_t appMain(int argc, char* argv[]) {
         if (flags & ctx.showContactsBit) {
             setMode(&ctx, ViewMode::Contacts);
         }
+        if (flags & ctx.showInspectBit) {
+            setMode(&ctx, ViewMode::Inspect);
+        }
 
         bool changed = false;
         MeshEvent meshEvent {};
         while (mesh_event_poll(&meshEvents, &meshEvent) == ERROR_NONE) {
             changed |= meshEvent.type == MESH_EVENT_STATE || meshEvent.type == MESH_EVENT_CHANNEL || meshEvent.type == MESH_EVENT_CONTACT;
+            ::std::string line = formatEvent(&ctx, meshEvent);
+            if (!line.empty()) {
+                addInspectLine(&ctx, ::std::move(line));
+            }
         }
 
         AppEvent event {};

@@ -1,3 +1,5 @@
+#define L10N_APP "mesh"
+#include <Tactility/i18n/AppDomain.h>
 #include <Tactility/app/meshchat/MeshChatCommon.h>
 
 #include <app/start.h>
@@ -52,7 +54,13 @@ NetworkInfo loadNetworkInfo() {
         char name[MESH_NAME_MAX_LENGTH + 1];
         MeshRadioKind kind;
         if (mesh_get_radio_name(i, name, sizeof(name)) == ERROR_NONE && strcmp(name, radio) == 0 && mesh_get_radio_kind(i, &kind) == ERROR_NONE) {
-            snprintf(info.network, sizeof(info.network), "%s", getNetworkLabel(id));
+            char preset[MESH_NAME_MAX_LENGTH + 1] = {};
+            // Only Meshtastic shows its preset, such as LongFast. MeshCore's is a region.
+            if (strcmp(id, "meshtastic") == 0 && mesh_get_preset(id, preset, sizeof(preset)) == ERROR_NONE && preset[0] != '\0' && strcmp(preset, "Default") != 0) {
+                snprintf(info.network, sizeof(info.network), "%s (%s)", getNetworkLabel(id), preset);
+            } else {
+                snprintf(info.network, sizeof(info.network), "%s", getNetworkLabel(id));
+            }
             snprintf(info.modulation, sizeof(info.modulation), "%s", kind == MESH_RADIO_LORA ? "LoRa" : "ESP-NOW");
             break;
         }
@@ -86,9 +94,9 @@ lv_obj_t* createNetworkHeader(lv_obj_t* parent) {
 
 void updateNetworkHeader(lv_obj_t* header, const NetworkInfo& info) {
     lv_obj_set_hidden(header, info.running && info.network[0] == '\0');
-    lv_span_set_text(lv_spangroup_get_child(header, 0), info.running ? "Using " : "Mesh is ");
-    lv_span_set_text(lv_spangroup_get_child(header, NETWORK_SPAN), info.running ? info.network : "OFF");
-    lv_span_set_text(lv_spangroup_get_child(header, 2), info.running ? " via " : "");
+    lv_span_set_text(lv_spangroup_get_child(header, 0), info.running ? tr("Using ") : tr("Mesh is "));
+    lv_span_set_text(lv_spangroup_get_child(header, NETWORK_SPAN), info.running ? info.network : tr("OFF"));
+    lv_span_set_text(lv_spangroup_get_child(header, 2), info.running ? tr(" via ") : "");
     lv_span_set_text(lv_spangroup_get_child(header, MODULATION_SPAN), info.modulation);
     lv_spangroup_refresh(header);
 }

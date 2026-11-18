@@ -1,0 +1,91 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: de-DE\n"
+
+msgid "Approximate"
+msgstr "Ungefähr"
+
+msgid "Auto-connect"
+msgstr "Automatisch verbinden"
+
+msgid "Brightness"
+msgstr "Helligkeit"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "Close"
+msgstr "Schließen"
+
+msgid "Confirmation"
+msgstr "Bestätigung"
+
+msgid "Connect"
+msgstr "Verbinden"
+
+msgid "Custom"
+msgstr "Benutzerdefiniert"
+
+msgid "Disabled"
+msgstr "Deaktiviert"
+
+msgid "Disconnect"
+msgstr "Trennen"
+
+msgid "Enabled"
+msgstr "Aktiviert"
+
+msgid "Error"
+msgstr "Fehler"
+
+msgid "File not found"
+msgstr "Datei nicht gefunden"
+
+msgid "Forget"
+msgstr "Vergessen"
+
+msgid "Language"
+msgstr "Sprache"
+
+msgid "Loading..."
+msgstr "Lädt..."
+
+msgid "Mesh"
+msgstr "Mesh"
+
+msgid "Mode"
+msgstr "Modus"
+
+msgid "Never"
+msgstr "Nie"
+
+msgid "No"
+msgstr "Nein"
+
+msgid "No networks found."
+msgstr "Keine Netzwerke gefunden."
+
+msgid "None"
+msgstr "Keine"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Open"
+msgstr "Öffnen"
+
+msgid "Precise"
+msgstr "Genau"
+
+msgid "Retry"
+msgstr "Wiederholen"
+
+msgid "Select"
+msgstr "Auswählen"
+
+msgid "Timeout"
+msgstr "Zeitlimit"
+
+msgid "Yes"
+msgstr "Ja"

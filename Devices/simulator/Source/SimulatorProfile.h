@@ -56,6 +56,7 @@ OrientationOverride loadSelectedOrientation();
 /**
  * Saves the profile and orientation for the next run. A change also sets the saved orientation of the Display settings:
  * the override, or none for the default so that the profile's own orientation applies.
+ * A different profile also removes the theming overrides of the Appearance settings.
  */
 bool saveSelection(size_t profileIndex, OrientationOverride orientation);
 

@@ -1,0 +1,91 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: nl-NL\n"
+
+msgid "Approximate"
+msgstr "Bij benadering"
+
+msgid "Auto-connect"
+msgstr "Automatisch verbinden"
+
+msgid "Brightness"
+msgstr "Helderheid"
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Close"
+msgstr "Sluiten"
+
+msgid "Confirmation"
+msgstr "Bevestiging"
+
+msgid "Connect"
+msgstr "Verbinden"
+
+msgid "Custom"
+msgstr "Aangepast"
+
+msgid "Disabled"
+msgstr "Uitgeschakeld"
+
+msgid "Disconnect"
+msgstr "Verbinding verbreken"
+
+msgid "Enabled"
+msgstr "Ingeschakeld"
+
+msgid "Error"
+msgstr "Fout"
+
+msgid "File not found"
+msgstr "Bestand niet gevonden"
+
+msgid "Forget"
+msgstr "Vergeten"
+
+msgid "Language"
+msgstr "Taal"
+
+msgid "Loading..."
+msgstr "Laden..."
+
+msgid "Mesh"
+msgstr "Mesh"
+
+msgid "Mode"
+msgstr "Modus"
+
+msgid "Never"
+msgstr "Nooit"
+
+msgid "No"
+msgstr "Nee"
+
+msgid "No networks found."
+msgstr "Geen netwerken gevonden."
+
+msgid "None"
+msgstr "Geen"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Open"
+msgstr "Openen"
+
+msgid "Precise"
+msgstr "Nauwkeurig"
+
+msgid "Retry"
+msgstr "Opnieuw"
+
+msgid "Select"
+msgstr "Kiezen"
+
+msgid "Timeout"
+msgstr "Time-out"
+
+msgid "Yes"
+msgstr "Ja"

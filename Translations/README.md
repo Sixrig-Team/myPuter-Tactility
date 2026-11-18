@@ -1,25 +1,50 @@
 # Translations
 
-## Requirements
+Tactility uses gettext style translations: the English text in the source code is the key, and a missing translation shows the English text.
 
-- Install [LibreOffice Calc](https://libreoffice.org/)
-- Ensure you have Python 3 installed (Python 2 is not supported)
+```cpp
+#include <localisation/tr.h>
 
-## Steps
+lv_label_set_text(label, tr("Delete"));
+alertdialog::start(id, tr("Are you sure?"), tt::i18n::format(tr("Delete {}?"), { name }), buttons);
+```
 
-To add new translations or edit existing ones, please follow these steps:
+- Use `trc("context", "Open")` when one English word has more than one meaning.
+- Put `{}` placeholders in the text instead of concatenating strings, so a translation can change the word order. Use `tt::i18n::format()` to fill them in.
+- Don't translate text that is built from parts or that is a file name, id or log message.
 
-1. Edit `Translations.ods` (see chapter below)
-2. In LibreOffice Calc, select the relevant tab that you want to export
-3. Click on `File` -> `Save a copy...` and save the file as `[tabname].csv` (without the "[]")
-4. Repeat step 2 and 3 for all tabs that you updated
-5. Run `python generate-all.py`
+## Files
 
-## Notes
+`Translations/<domain>/<locale>.po` holds the translations of Tactility, for example `Translations/tactility/nl-NL.po`. The `tactility` domain is shared by every app. Each app of Tactility has its own domain, a folder named after it like `Translations/setup/`. A text that an app's domain lacks falls back to the `tactility` domain, so put texts that several apps use ("Brightness", "Never", colour names) there. They are standard PO files: edit them with a text editor or a tool like Poedit.
+English needs no file. A region falls back to the file of its language (`nl.po` serves `nl-NL`).
 
-- Do not commit the CSV files
-- When editing the ODS file, make sure you don't paste in formatted data (use CTRL+Shift+V instead of CTRL+V)
-- ODS export settings:
-    - Field delimiter: `,`
-    - String delimiter: `"`
-    - Encoding: `UTF-8`
+The build compiles them with `Buildscripts/l10n/generate-catalogs.py` and embeds them in the firmware.
+
+## Adding a language
+
+1. Copy an existing file to `Translations/<domain>/<locale>.po`, for each domain and translate the `msgstr` values.
+2. Add the language to the table in `Tactility/Source/settings/Language.cpp`.
+3. Build. Fuzzy (`#, fuzzy`) and empty entries are skipped.
+
+## Extracting texts
+
+`python Buildscripts/TactilitySDK/Tools/extract_texts.py <source-folder>... > messages.pot` lists every `tr()`/`trc()` text, as a template for a new `.po` file.
+
+## Apps with their own translations
+
+See the localisation page in the Tactility documentation: apps ship `translations/<locale>.po` files that `tt app build` compiles, and `tt app translations` makes the template.
+
+## Translating a built-in app
+
+Define the folder name and include the domain header before anything that includes `<localisation/tr.h>`:
+
+```cpp
+#define L10N_APP "display"
+#include <Tactility/i18n/AppDomain.h>
+```
+
+The domain is opened on first use. Use `tr_noop("text")` for texts in constant tables and `tr(table[i])` where they are shown.
+
+## English only firmware
+
+`CONFIG_TT_LANGUAGE_SELECTION=n` (`Tactility/Kconfig`, set with `sdkconfig.CONFIG_TT_LANGUAGE_SELECTION=n` in `device.properties`) builds without the translations: `generate-catalogs.py --english-only` writes an empty table, `tr()` in the apps returns the English text as is, the Language settings app isn't registered and the setup starts at its welcome page. The language setting is not applied, so everything stays English. The simulator builds with the translations, or without them with `-DTT_SIM_LANGUAGE_SELECTION=OFF`.

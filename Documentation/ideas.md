@@ -4,22 +4,32 @@
 
 ## Higher Priority
 
+- Pick better icon for toggling touch in remote.py
 - Files app: make reusable system UI for pagination?
+- Move more window management code from Tactility/ to window-manager
+- Newer Meshtastic firmware supports per-node public-key direct messages.
 
 ## Medium Priority
 
+- 2 finger swipe for scroll in simulator
+- Tab5: UI hangs when app installs (not download phase, but file unpacking phase)
+- Add "Downloading Apps" step in Setup that downloads useful apps.
+  It's an optional step at the end that only shows if wifi is connected.
+- Watch and others: sleep/wake support. "With a button to save energy of the screen while not having to turn the gps off by disabling power. Also could put device into pocket without worrying about pressing things on touchscreen.". Considere adding a list of hardware that supports on/off and have the user select which hardware turns on/off with light sleep. (not to confuse with ESP light sleep)
+Consider adding a light/deep sleep mode:
+  tt light sleep: esp32 does not go in sleep mode, user decides which devices go off (e.g. display+lvgl, wifi, lora, etc.)
+  tt deep sleep: esp32 goes into "esp light sleep" mode
 - Improve watch interface. Consider adding some sort of device classification so UI in apps can choose to optimize for the watch.
-- Support for running scripts at boot
 - Update timezones.csv wrt 2026e, write tests for related code
 - Notification support
 - Low/critical memory warning test/rework
 - Try https://github.com/bootdsc/Fastwave-Eink-Driver with CL-32 e-paper.
 - Pick different font to improve monochrome screen readability (or change the weight).
 - Inspect code for memory improvements: replace `std::*` with `tt::std::*`
-- Tactility/Source/app/imageviewer/ImageViewer.cpp: Limit memory used to open an image.
+- ImageViewer: Support SVG files
+- ImageViewer: Limit memory used to open an image.
   loadFile() now resizes fileData to the entire file size before displaying the image. start accepts a file path without a size limit, so opening a large image can exhaust memory on an embedded device before LVGL decodes it. Reject files above a supported limit or retain a bounded file-backed decoding path.
 - A fullscreen tiny keyboard that works with single stroke gestures (similar to Palm OS Graffiti)
-- Move more window management code from Tactility/ to window-manager
 - Implement signal/raise for terminal apps (for CTRL+C and window resize signals)
 - Build the simulator with `-fno-exceptions` to match ESP32. First make app exit() work without C++ unwinding there:
   scheduler.cpp's DeferredUnload relies on pthread_exit()'s forced unwind running its destructor.
@@ -42,14 +52,13 @@
 
 ## Lower Priority
 
+- Auto-generate simulator profiles
 - BlueTooth as radio backend for MeshCore/Meshtastic?
 - Show device name clearly in on-device web server landing page (to identify tabs of multiple devices easier)
 - When Wi-Fi connects, check for app updates
-- Diceware app has large "+" and "-' buttons on Cardputer. It should be smaller.
 - lvgl-module has a keyboard.cpp that creates a `keyboard_group`. This group is set as the default group, so it can also work with trackball(= LVGL "encoder").
   Make a separate group that is the default group. The keyboard can then use it (or use its own).
   The basic idea is to invert the ownership: now the keyboard group is made the default group, but it's probably more logical to have the default group used by the keyboard.
-- Localize all apps
 - Explore LVGL9's FreeRTOS functionality
 - Fix system time to not be 1980 (use build year january 1st as a minimum).
 - Use std::span or string_view in StringUtils https://youtu.be/FRkJCvHWdwQ?t=2754 
@@ -63,7 +72,6 @@
 
 - Audio player app
 - Audio recording app
-- OTA updates
 
 # App Ideas
 
